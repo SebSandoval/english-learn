@@ -4,7 +4,7 @@ import { sttProvider } from "@/lib/audio";
 import { activeSession, getOrCreateUser } from "@/lib/db/queries";
 import type { Session, User } from "@/lib/db/types";
 import { env } from "@/lib/env";
-import { LlmUnavailableError } from "@/lib/llm/openrouter";
+import { LlmUnavailableError } from "@/lib/llm/chat";
 import { processTurn } from "@/lib/modes";
 import { downloadFile, sendChatAction, sendMessage } from "@/lib/telegram/client";
 import { handleCommand } from "@/lib/telegram/commands";

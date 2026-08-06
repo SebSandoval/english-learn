@@ -13,22 +13,38 @@ const schema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_SECRET_KEY: z.string().min(1),
 
-  // Phase 2 — OpenRouter + Telegram
+  // Phase 2 — the LLM + Telegram
   OPENROUTER_API_KEY: z.string().min(1).optional(),
-  // Both accept a comma-separated list; they're concatenated into one fallback
-  // chain, tried in order. See modelChain() in lib/llm/openrouter.ts.
-  //
-  // Order comes from scripts/bench-models.mts run against the real tutor prompt,
-  // ranked on JSON validity first and latency second. Re-run it when a model
-  // starts misbehaving — free-tier quality shifts without notice.
-  // Reordered 2026-08-06 after a timeout in production and a fresh `npm run
-  // bench`: openrouter/free answered in 415ms against nemotron's 1577ms, and
-  // nemotron emitted the SAME correction pattern twice in one reply — patterns
-  // are deduplication keys, so that inflates frecuencia on a single mistake.
-  OPENROUTER_MODEL: z.string().default("openrouter/free"),
-  OPENROUTER_MODEL_FALLBACK: z
+
+  /**
+   * The fallback chain, tried in order: `provider:model`, comma-separated.
+   *
+   * Groq leads because the chain has to cross PROVIDERS to be worth anything.
+   * On 2026-08-06 the bot went down with every OpenRouter model returning 429
+   * `free-models-per-day`: one shared daily quota, so a chain living entirely
+   * inside OpenRouter fails all at once and the fallback buys nothing. Groq's
+   * quota is counted separately, and its key was already configured for
+   * transcription.
+   *
+   * Order inside Groq is measured against the real LISTENING prompt — the
+   * longest generation the bot ever asks for: llama-3.3-70b 1350ms,
+   * gpt-oss-120b 1733ms, both valid JSON. qwen3.6-27b is absent because it
+   * failed JSON validation outright. Re-run `npm run bench` when replies
+   * degrade, and reorder here.
+   */
+  LLM_CHAIN: z
     .string()
-    .default("nvidia/nemotron-3-super-120b-a12b:free,google/gemma-4-26b-a4b-it:free"),
+    .default(
+      "groq:llama-3.3-70b-versatile," +
+        "groq:openai/gpt-oss-120b," +
+        "openrouter:openrouter/free," +
+        "openrouter:nvidia/nemotron-3-super-120b-a12b:free",
+    ),
+
+  // Legacy, appended after LLM_CHAIN. Entries with no provider prefix are read
+  // as OpenRouter. Kept so an override already set in Vercel keeps working.
+  OPENROUTER_MODEL: z.string().default(""),
+  OPENROUTER_MODEL_FALLBACK: z.string().default(""),
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional(),
 

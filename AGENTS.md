@@ -86,18 +86,32 @@ and `tts_provider`.
   Groq is handed a rewritten `.ogg` filename because Telegram's `.oga` is
   rejected on the extension alone.
 
-## Phase 6 — provider chains with failover (agreed, not started)
+## The LLM chain must cross providers
 
-Sebastián asked for "varios flujos y dependiendo de cuál esté conectado se usa".
-Most of that already exists and should NOT be rebuilt: `OPENROUTER_MODEL` /
-`OPENROUTER_MODEL_FALLBACK` already form an ordered chain, and `sttProvider()` /
-`ttsProvider()` already select on key presence.
+Learned the hard way on 2026-08-06: the bot went down with every model
+returning `429 free-models-per-day`. OpenRouter's free models share **one**
+daily quota (50 requests, or 1000 if you ever buy 10 credits), so a chain that
+lives entirely inside OpenRouter fails all at once and the fallback buys
+nothing. `LLM_CHAIN` now leads with Groq, whose quota is counted separately and
+whose key was already configured for transcription.
 
-The real gap is **failover in voice**. When Deepgram fails mid-turn, `deliver()`
-degrades straight to text without trying Google, even with the key present —
-while the LLM does retry down its chain. Fix by giving `lib/audio/` the shape
-`lib/llm/openrouter.ts` already has: an ordered list from env, tried in order,
-logging which provider answered.
+The symptom is worth recognising: it presents as one feature being broken —
+"/listen doesn't work" — because that is whatever you happened to try. It is
+never one feature. Check `/api/health` → `diagnostics.llm_chain` first; it shows
+the RESOLVED chain, with entries whose provider key is missing already dropped.
+
+Note that running `npm run bench` and any diagnostic scripts spend from the same
+daily quota as the bot.
+
+## Phase 6 — provider chains with failover (partly done)
+
+**Done for the LLM** (see above). Still open for voice:
+
+When Deepgram fails mid-turn, `deliver()` degrades straight to text without
+trying Google, even with that key present — while the LLM does retry down its
+chain. Fix by giving `lib/audio/` the shape `lib/llm/chat.ts` now has: an
+ordered `provider:model` list from env, tried in order, logging which one
+answered.
 
 **Explicitly out of scope: a toggle UI or feature-flag service.** For a
 single-user bot the env var is the switch, and it cannot break at runtime.
@@ -159,10 +173,10 @@ npm run build
 ```
 
 `npm run bench` re-runs the free-model benchmark against the real tutor prompt.
-Free-tier quality drifts; reorder `OPENROUTER_MODEL` /
-`OPENROUTER_MODEL_FALLBACK` (both accept comma-separated lists) when replies
-degrade. Current chain was chosen on JSON validity first, latency second —
-`openai/gpt-oss-20b:free` was dropped for returning invalid JSON.
+Free-tier quality drifts; reorder **`LLM_CHAIN`** when replies degrade. Entries
+are `provider:model`, tried in order, and the chain was chosen on JSON validity
+first and latency second — `openai/gpt-oss-20b:free` and `qwen/qwen3.6-27b` were
+both dropped for returning invalid JSON.
 
 ## Architecture notes worth keeping
 

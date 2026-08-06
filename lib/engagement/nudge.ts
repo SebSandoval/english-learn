@@ -6,7 +6,7 @@ import type { PracticeMode, User } from "@/lib/db/types";
 import { decideTone } from "@/lib/engagement/nudge-tone";
 import { masteredCount, readStreak } from "@/lib/engagement/streak";
 import { localDate, localTime, localWeekday, withinWindow } from "@/lib/engagement/time";
-import { callLlm } from "@/lib/llm/openrouter";
+import { callLlm } from "@/lib/llm/chat";
 import { buildNudgePrompt } from "@/lib/llm/prompts/nudge";
 import { chooseMode } from "@/lib/modes/selector";
 import { buildQueue } from "@/lib/srs/queue";

@@ -15,7 +15,7 @@ import {
 } from "@/lib/db/queries";
 import type { Session, User } from "@/lib/db/types";
 import { markNudgeAnswered, registerPractice } from "@/lib/engagement/streak";
-import { callLlm, type LlmMessage } from "@/lib/llm/openrouter";
+import { callLlm, type LlmMessage } from "@/lib/llm/chat";
 import { buildTutorPrompt } from "@/lib/llm/prompts/tutor";
 import { parseTutorReply, type TutorReply } from "@/lib/llm/schemas";
 import {

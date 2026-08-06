@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { ttsProvider, voiceCapabilities } from "@/lib/audio";
 import { db } from "@/lib/db/client";
 import { env } from "@/lib/env";
+import { describeChain } from "@/lib/llm/chat";
 import { implementedModes } from "@/lib/modes/selector";
 
 /**
@@ -74,8 +75,10 @@ export async function checkHealth(): Promise<HealthReport> {
     {
       key: "conversation",
       label: "Conversar",
-      ready: Boolean(env.OPENROUTER_API_KEY),
-      detail: Boolean(env.OPENROUTER_API_KEY)
+      // Any provider in the chain will do; the point is that *something* can
+      // answer, not that a particular vendor is configured.
+      ready: Boolean(env.GROQ_API_KEY || env.OPENROUTER_API_KEY),
+      detail: Boolean(env.GROQ_API_KEY || env.OPENROUTER_API_KEY)
         ? "Puede pensar respuestas y corregirte."
         : "Falta la clave del modelo: no puede responder.",
     },
@@ -119,8 +122,10 @@ export async function checkHealth(): Promise<HealthReport> {
     tables,
     capabilities,
     diagnostics: {
-      model: env.OPENROUTER_MODEL,
-      model_fallback: env.OPENROUTER_MODEL_FALLBACK,
+      // The resolved chain, not the raw env var: entries whose provider has no
+      // key are dropped, and that difference is exactly what you need to see
+      // when a deploy behaves differently from your machine.
+      llm_chain: describeChain(),
       tts_provider: ttsProvider()?.name ?? "none",
       voice_modes:
         implementedModes()
