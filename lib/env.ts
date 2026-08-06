@@ -21,10 +21,14 @@ const schema = z.object({
   // Order comes from scripts/bench-models.mts run against the real tutor prompt,
   // ranked on JSON validity first and latency second. Re-run it when a model
   // starts misbehaving — free-tier quality shifts without notice.
-  OPENROUTER_MODEL: z.string().default("nvidia/nemotron-3-super-120b-a12b:free"),
+  // Reordered 2026-08-06 after a timeout in production and a fresh `npm run
+  // bench`: openrouter/free answered in 415ms against nemotron's 1577ms, and
+  // nemotron emitted the SAME correction pattern twice in one reply — patterns
+  // are deduplication keys, so that inflates frecuencia on a single mistake.
+  OPENROUTER_MODEL: z.string().default("openrouter/free"),
   OPENROUTER_MODEL_FALLBACK: z
     .string()
-    .default("openrouter/free,google/gemma-4-26b-a4b-it:free"),
+    .default("nvidia/nemotron-3-super-120b-a12b:free,google/gemma-4-26b-a4b-it:free"),
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional(),
 

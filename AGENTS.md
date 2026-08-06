@@ -103,7 +103,7 @@ logging which provider answered.
 single-user bot the env var is the switch, and it cannot break at runtime.
 Decided 2026-08-06.
 
-## The front page
+## The front page and /status
 
 `app/page.tsx` is the manual, not marketing — a reference card for when he
 forgets a command. Copy is Spanish; anything the bot itself says stays English,
@@ -113,6 +113,12 @@ Content is mirrored from the code and goes stale silently: the command list from
 `lib/telegram/commands.ts`, the four modes from `lib/llm/prompts/tutor.ts`, and
 the interval ladder from `lib/srs/sm2.ts` (the bar widths ARE the day counts, so
 changing `LADDER` there means changing it here). Update both together.
+
+`/status` is the human answer to "is it working?" and `/api/health` the machine
+one; both come from `checkHealth()` in `lib/health.ts`, so they can't disagree.
+Capabilities there are named for what the bot does ("Escucharte"), never for the
+vendor — and the failing-table detail only renders when something is broken,
+because a wall of green rows trains you to stop reading it.
 
 Design notes worth keeping: `--signal` and `--signal-ink` are the same amber for
 two jobs — the bright one fails contrast as text on the light page, so text uses
@@ -176,6 +182,16 @@ degrade. Current chain was chosen on JSON validity first, latency second —
 - **The SM-2 ladder is deliberate**: `1/3/7/15/30/60` with the ease factor as a
   multiplier, not plain SM-2's `interval × ease`. See the comment in
   `lib/srs/sm2.ts`.
+- **One clock per request.** The webhook stamps a deadline on arrival and every
+  slow step measures against it: transcription time comes out of the LLM's
+  budget instead of being added on top. Before this, a voice turn ran
+  STT + a fresh 50s LLM budget + synthesis and blew past `maxDuration`, which
+  surfaced as `Out of time after This operation was aborted` and a generic
+  apology in the chat. `LlmUnavailableError` now separates "the free models are
+  saturated, resend it" from a real bug.
+- **Voice notes are never echoed back as text.** Reading your own words right
+  after speaking them turns the drill into dictation. The transcript is still
+  stored on the message row, so nothing is lost.
 - **Known weak spot**: the model does not reliably emit `review_item_id`, so
   grading usually falls back to our own queue index. Logs warn on mismatch. If
   review starts asking odd things, look there first.

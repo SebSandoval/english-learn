@@ -32,7 +32,19 @@ export interface TurnInput {
   audioPath?: string;
   /** Current streak, so the tutor can acknowledge it when relevant. */
   streak?: number;
+  /**
+   * Absolute epoch-ms deadline for this turn's LLM work.
+   *
+   * Voice turns arrive here having already spent seconds on download and
+   * transcription, and still owe time for synthesis. Without this the LLM
+   * would start its own 50s budget from scratch and the function would be
+   * killed before the student got an answer.
+   */
+  deadline?: number;
 }
+
+/** Below this, compressing the history is not worth delaying the reply for. */
+const SUMMARY_BUDGET_MS = 9_000;
 
 /**
  * One full conversation turn, shared by every mode.
@@ -78,7 +90,11 @@ export async function processTurn(input: TurnInput): Promise<TutorReply> {
     })),
   ];
 
-  const raw = await callLlm(messages, { json: true, temperature: 0.85 });
+  const raw = await callLlm(messages, {
+    json: true,
+    temperature: 0.85,
+    deadline: input.deadline,
+  });
   const reply = parseTutorReply(raw);
 
   await saveMessage(session.id, "assistant", reply.reply);
@@ -94,7 +110,7 @@ export async function processTurn(input: TurnInput): Promise<TutorReply> {
     ),
   ]);
 
-  await compressIfNeeded(session);
+  await compressIfNeeded(session, input.deadline);
 
   // Review scheduling happens after the reply is built, so a grading failure
   // can never cost the student their answer.
@@ -157,9 +173,17 @@ function serializeModeContext(session: Session): string | undefined {
  * Without this the context would grow without bound. With it, the LLM always
  * receives "last 12 turns + summary of everything before", which is constant cost.
  */
-async function compressIfNeeded(session: Session): Promise<void> {
+async function compressIfNeeded(session: Session, deadline?: number): Promise<void> {
   const total = await countMessages(session.id);
   if (total < SUMMARY_THRESHOLD || total % MESSAGE_WINDOW !== 0) return;
+
+  // This runs before the student sees their reply, so on a turn that is
+  // already late we skip it. The next multiple of MESSAGE_WINDOW picks it up,
+  // and a slightly longer prompt beats a turn that times out.
+  if (deadline && deadline - Date.now() < SUMMARY_BUDGET_MS) {
+    console.warn("[summary] skipped: not enough time left in the turn");
+    return;
+  }
 
   try {
     const history = await recentHistory(session.id, SUMMARY_THRESHOLD);
@@ -179,7 +203,11 @@ async function compressIfNeeded(session: Session): Promise<void> {
         },
         { role: "user", content: transcript },
       ],
-      { temperature: 0.3, maxTokens: 250 },
+      {
+        temperature: 0.3,
+        maxTokens: 250,
+        deadline: deadline ? Math.min(deadline, Date.now() + SUMMARY_BUDGET_MS) : undefined,
+      },
     );
 
     await saveSummary(session.id, summary.trim());

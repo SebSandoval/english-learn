@@ -239,7 +239,7 @@ export default function Manual() {
           Proyecto personal. El bot habla inglés contigo, siempre — incluso si le
           escribes en español.
         </p>
-        <a href="/api/health">Estado del servicio</a>
+        <a href="/status">Estado del servicio</a>
       </footer>
     </div>
   );

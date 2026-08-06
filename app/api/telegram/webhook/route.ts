@@ -4,8 +4,9 @@ import { sttProvider } from "@/lib/audio";
 import { activeSession, getOrCreateUser } from "@/lib/db/queries";
 import type { Session, User } from "@/lib/db/types";
 import { env } from "@/lib/env";
+import { LlmUnavailableError } from "@/lib/llm/openrouter";
 import { processTurn } from "@/lib/modes";
-import { esc, downloadFile, sendChatAction, sendMessage } from "@/lib/telegram/client";
+import { downloadFile, sendChatAction, sendMessage } from "@/lib/telegram/client";
 import { handleCommand } from "@/lib/telegram/commands";
 import { deliver } from "@/lib/telegram/deliver";
 
@@ -14,6 +15,18 @@ export const maxDuration = 60;
 
 /** Longer than this and transcription plus a reply won't fit in maxDuration. */
 const MAX_VOICE_SECONDS = 240;
+
+/**
+ * How long the whole request may take, measured from the moment it arrives.
+ *
+ * Under maxDuration with room to send the failure message if we give up. Every
+ * slow step downstream is measured against this one clock, so transcription
+ * time comes out of the LLM's budget rather than being added on top of it.
+ */
+const REQUEST_BUDGET_MS = 52_000;
+
+/** Held back from the LLM's share for synthesis and the upload to Telegram. */
+const SPEAKING_RESERVE_MS = 12_000;
 
 interface TelegramUpdate {
   update_id: number;
@@ -50,26 +63,39 @@ export async function POST(req: Request) {
   if (!message || message.from?.is_bot) return NextResponse.json({ ok: true });
 
   const chatId = message.chat.id;
+  const deadline = Date.now() + REQUEST_BUDGET_MS;
 
   try {
-    await handleUpdate(chatId, message);
+    await handleUpdate(chatId, message, deadline);
   } catch (e) {
     console.error("[webhook]", e);
-    await sendMessage(
-      chatId,
-      "Something broke on my end. Try again in a moment — if it keeps happening, it's a bug worth looking at.",
-    ).catch(() => {});
+    await sendMessage(chatId, apology(e)).catch(() => {});
   }
 
   return NextResponse.json({ ok: true });
 }
 
-async function handleUpdate(chatId: number, message: TelegramMessage) {
+/**
+ * The free models fail often enough that "something broke" is the wrong story:
+ * it reads as a bug in the bot when the fix is to send the message again.
+ */
+function apology(e: unknown): string {
+  if (e instanceof LlmUnavailableError) {
+    return (
+      "The model I think with is overloaded right now — that's the price of the " +
+      "free tier. Send that again in a few seconds and it'll usually go through."
+    );
+  }
+
+  return "Something broke on my end. Try again in a moment — if it keeps happening, it's a bug worth looking at.";
+}
+
+async function handleUpdate(chatId: number, message: TelegramMessage, deadline: number) {
   const user = await getOrCreateUser(chatId, message.from?.first_name);
 
   const audio = message.voice ?? message.audio;
   if (audio) {
-    await handleVoiceNote(chatId, user, audio);
+    await handleVoiceNote(chatId, user, audio, deadline);
     return;
   }
 
@@ -86,7 +112,12 @@ async function handleUpdate(chatId: number, message: TelegramMessage) {
   }
 
   const session = await activeSession(user.id, "free_conversation");
-  const reply = await processTurn({ user, session, text });
+  const reply = await processTurn({
+    user,
+    session,
+    text,
+    deadline: deadline - SPEAKING_RESERVE_MS,
+  });
 
   await deliver(chatId, session.modo, reply);
 }
@@ -102,6 +133,7 @@ async function handleVoiceNote(
   chatId: number,
   user: User,
   audio: { file_id: string; duration?: number },
+  deadline: number,
 ) {
   const stt = sttProvider();
 
@@ -135,12 +167,11 @@ async function handleVoiceNote(
     return;
   }
 
-  // Showing the transcription back is not a courtesy: consistent mistranscription
-  // of the same word is the only pronunciation signal a text model ever gets, and
-  // the student should see it too.
-  await sendMessage(chatId, `🎙 <i>${esc(transcript.text)}</i>`);
-  await sendChatAction(chatId, "typing");
-
+  // The transcript is deliberately NOT echoed back. Reading your own words
+  // right after speaking them makes the exercise feel like dictation, and it
+  // pulls attention onto the transcription instead of onto the answer. It is
+  // still stored on the message row, so the pronunciation signal in repeated
+  // mistranscriptions is not lost — it just isn't shown mid-conversation.
   const session: Session = await activeSession(user.id, "voice_drill");
   const reply = await processTurn({
     user,
@@ -150,6 +181,7 @@ async function handleVoiceNote(
     // Telegram file ids stay valid, so this is a real handle on the original
     // audio without us paying to store any of it.
     audioPath: audio.file_id,
+    deadline: deadline - SPEAKING_RESERVE_MS,
   });
 
   await deliver(chatId, session.modo, reply);

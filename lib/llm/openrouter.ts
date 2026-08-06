@@ -9,6 +9,29 @@ export interface LlmOptions {
   temperature?: number;
   maxTokens?: number;
   json?: boolean;
+  /**
+   * Absolute epoch-ms deadline for the whole call, including retries.
+   *
+   * Needed because the LLM is not always the first thing a request does. A
+   * voice turn spends seconds downloading and transcribing audio first, and
+   * then still owes time for synthesis afterwards; a budget measured from
+   * "now" would silently overrun the route's maxDuration and get the function
+   * killed mid-reply. Callers that know when the request started pass that.
+   */
+  deadline?: number;
+}
+
+/**
+ * Every model in the chain failed or ran out of time.
+ *
+ * Typed so the webhook can tell "the free models are having a bad minute,
+ * retrying will probably work" apart from a real bug, and say so.
+ */
+export class LlmUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LlmUnavailableError";
+  }
 }
 
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
@@ -33,7 +56,7 @@ export async function callLlm(
 ): Promise<string> {
   const apiKey = requireEnv("OPENROUTER_API_KEY");
   const models = modelChain();
-  const deadline = Date.now() + TOTAL_BUDGET_MS;
+  const deadline = options.deadline ?? Date.now() + TOTAL_BUDGET_MS;
 
   let lastError: Error | null = null;
 
@@ -41,7 +64,7 @@ export async function callLlm(
     for (const model of models) {
       const remaining = deadline - Date.now();
       if (remaining < 3_000) {
-        throw new Error(
+        throw new LlmUnavailableError(
           `Out of time after ${lastError ? lastError.message : "no attempts"}`,
         );
       }
@@ -55,7 +78,7 @@ export async function callLlm(
     }
   }
 
-  throw new Error(`All models failed. Last error: ${lastError?.message}`);
+  throw new LlmUnavailableError(`All models failed. Last error: ${lastError?.message}`);
 }
 
 /**
