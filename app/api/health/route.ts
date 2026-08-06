@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
 import { db } from "@/lib/db/client";
@@ -54,10 +56,17 @@ function configured(): Record<string, boolean | string | number> {
     telegram_token: Boolean(env.TELEGRAM_BOT_TOKEN),
     telegram_webhook_secret: Boolean(env.TELEGRAM_WEBHOOK_SECRET),
     cron_secret: Boolean(env.CRON_SECRET),
-    // Enough to compare two environments; far too little to reconstruct.
     cron_secret_len: env.CRON_SECRET?.length ?? 0,
+    // 12 hex chars of a SHA-256 digest: enough to prove two environments hold
+    // the same value, useless for recovering it.
+    cron_secret_fp: fingerprint(env.CRON_SECRET),
     groq: Boolean(env.GROQ_API_KEY),
     google_tts: Boolean(env.GOOGLE_TTS_API_KEY),
     model: env.OPENROUTER_MODEL,
   };
+}
+
+function fingerprint(value?: string): string {
+  if (!value) return "none";
+  return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
