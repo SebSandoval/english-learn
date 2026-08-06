@@ -33,6 +33,9 @@ const schema = z.object({
 
   // Phase 5 — voice
   GROQ_API_KEY: z.string().min(1).optional(),
+  // TTS: Deepgram wins when both are set. See ttsProvider() in lib/audio.
+  DEEPGRAM_API_KEY: z.string().min(1).optional(),
+  DEEPGRAM_TTS_VOICE: z.string().default(""),
   GOOGLE_TTS_API_KEY: z.string().min(1).optional(),
   // The voice name carries its own locale, so switching to en-GB is this one
   // variable. Empty falls back to the default in lib/audio/google-tts.ts.

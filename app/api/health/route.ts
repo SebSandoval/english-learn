@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
+import { ttsProvider } from "@/lib/audio";
 import { db } from "@/lib/db/client";
 import { env } from "@/lib/env";
 import { implementedModes } from "@/lib/modes/selector";
@@ -62,7 +63,9 @@ function configured(): Record<string, boolean | string | number> {
     // the same value, useless for recovering it.
     cron_secret_fp: fingerprint(env.CRON_SECRET),
     groq: Boolean(env.GROQ_API_KEY),
+    deepgram: Boolean(env.DEEPGRAM_API_KEY),
     google_tts: Boolean(env.GOOGLE_TTS_API_KEY),
+    tts_provider: ttsProvider()?.name ?? "none",
     // Which spoken modes this deploy can actually offer. Half-configured voice
     // is a normal state, and this is how you tell which half.
     voice_modes: implementedModes()

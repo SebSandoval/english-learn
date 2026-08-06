@@ -1,5 +1,6 @@
 import "server-only";
 
+import { deepgramTts } from "@/lib/audio/deepgram-tts";
 import { googleTts } from "@/lib/audio/google-tts";
 import { groqStt } from "@/lib/audio/groq";
 import type { STTProvider, TTSProvider } from "@/lib/audio/types";
@@ -19,8 +20,19 @@ export function sttProvider(): STTProvider | null {
   return env.GROQ_API_KEY ? groqStt : null;
 }
 
+/**
+ * Deepgram first, Google as a fallback.
+ *
+ * Deepgram won on signup friction: Google's free tier is larger and contractual
+ * but demands a card on the project, which is a real cost when the whole point
+ * is that this runs for free. The Google provider stays because it works and
+ * costs nothing to keep — setting GOOGLE_TTS_API_KEY without a Deepgram key is
+ * all it takes to go back.
+ */
 export function ttsProvider(): TTSProvider | null {
-  return env.GOOGLE_TTS_API_KEY ? googleTts : null;
+  if (env.DEEPGRAM_API_KEY) return deepgramTts;
+  if (env.GOOGLE_TTS_API_KEY) return googleTts;
+  return null;
 }
 
 export interface VoiceCapabilities {

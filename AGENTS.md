@@ -23,7 +23,7 @@ Live at https://english-learn-murex.vercel.app · bot **@seb_english_push_bot**
 | 2 · `/api/chat` + Telegram text (FREE CONVERSATION) | ✅ done |
 | 3 · Streak, mode selector, `/api/nudge`, cron | ✅ done |
 | 4 · SPACED REVIEW with SM-2 | ✅ done |
-| 5 · Voice — STT/TTS for VOICE DRILL and LISTENING | ✅ code done, keys pending |
+| 5 · Voice — STT/TTS for VOICE DRILL and LISTENING | ✅ done |
 
 ## Phase 5 — voice
 
@@ -33,13 +33,22 @@ Providers, decided after benchmarking; do not re-litigate without new evidence:
   ~200x real-time. Local Whisper was rejected: Vercel is serverless, the model
   does not fit the bundle, and a second always-on service costs more and breaks
   more than the free tier it would replace.
-- **TTS: Google Cloud `Chirp 3 HD`.** 1M characters/month free, permanently.
-  Expected usage is ~40k/month, so it never bills. ElevenLabs' 10k/month would
-  last two days. Requires a card on the GCP project even though the free tier
-  never charges.
+- **TTS: Deepgram `aura-2-asteria-en`.** $200 of signup credit, **no card**, and
+  it returns Ogg/Opus natively — the one format Telegram renders as a playable
+  voice note. At ~40k characters/month ($0.030/1k) the credit lasts over a
+  decade. Caveat: promotional credit, not a contractual free tier, so this is
+  "free for years", not "free forever". Hard limit of **2000 characters** per
+  request, measured; `fitToLimit` cuts at a sentence boundary and warns.
 
 Both sit behind `STTProvider` / `TTSProvider` in `lib/audio/types.ts`. Nothing
 above `lib/audio/` names a vendor.
+
+**Google Chirp 3 HD was the original choice and lost on signup friction, not on
+quality — 2026-08-06.** Its free tier is bigger and contractual (1M chars/month,
+permanent) but GCP demanded a ~$10 card authorisation to start, which defeats
+the point of a project that runs for free. `lib/audio/google-tts.ts` is written,
+working and kept: setting `GOOGLE_TTS_API_KEY` with no Deepgram key switches
+back. Note it allows 5000 characters where Deepgram allows 2000.
 
 **Groq's own TTS was evaluated and rejected — measured, 2026-08-06.**
 `canopylabs/orpheus-v1-english` is on the same key, needs no card, and works
@@ -53,13 +62,11 @@ declares a placeholder 89478-second length because Groq streams it. Adding a
 wasm Opus encoder for this is the same trade we already refused with local
 Whisper. Re-open only if Groq starts returning Opus.
 
-**Still pending: the two API keys.** Until they land, voice degrades cleanly
-rather than breaking — `/drill` and `/listen` explain which half is missing,
-voice notes get a "I can't listen yet", and `implementedModes()` keeps the
-voice modes out of the nudge rotation. `/api/health` reports `voice_modes`.
-
-1. Groq account → API key → `GROQ_API_KEY` in `.env.local` and Vercel
-2. Google Cloud project → enable Text-to-Speech API → key → `GOOGLE_TTS_API_KEY`
+Both keys are configured (`GROQ_API_KEY`, `DEEPGRAM_API_KEY`). Voice still
+degrades cleanly if one is pulled: `/drill` and `/listen` say which half is
+missing, voice notes get "I can't listen yet", and `implementedModes()` keeps
+unusable modes out of the nudge rotation. `/api/health` reports `voice_modes`
+and `tts_provider`.
 
 ### How voice actually flows
 

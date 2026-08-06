@@ -38,7 +38,9 @@ export async function deliver(chatId: number, mode: PracticeMode, reply: TutorRe
 
   try {
     await sendChatAction(chatId, "record_voice");
-    const clip = await tts.synthesize(spoken, { rate: 1 });
+    // No rate override: Deepgram has no speaking-rate parameter, so asking for
+    // one would be a silent no-op rather than a setting.
+    const clip = await tts.synthesize(spoken);
     await sendVoice(chatId, clip);
   } catch (e) {
     console.error("[voice] synthesis failed:", e);
