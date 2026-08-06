@@ -41,6 +41,18 @@ Providers, decided after benchmarking; do not re-litigate without new evidence:
 Both sit behind `STTProvider` / `TTSProvider` in `lib/audio/types.ts`. Nothing
 above `lib/audio/` names a vendor.
 
+**Groq's own TTS was evaluated and rejected — measured, 2026-08-06.**
+`canopylabs/orpheus-v1-english` is on the same key, needs no card, and works
+after a one-click terms acceptance. Voices: autumn, diana, hannah, austin,
+daniel, troy. It loses on format: `response_format` accepts **only `wav`** —
+ogg, opus, mp3 and flac are all rejected outright. Telegram needs Ogg/Opus for a
+playable voice bubble, so it would need transcoding, and the raw audio is
+24kHz/16-bit mono at 47 KB/s: a 60-second listening passage is 2.9MB against
+0.18MB in Opus, 16x the mobile data on every single reply. Its WAV header also
+declares a placeholder 89478-second length because Groq streams it. Adding a
+wasm Opus encoder for this is the same trade we already refused with local
+Whisper. Re-open only if Groq starts returning Opus.
+
 **Still pending: the two API keys.** Until they land, voice degrades cleanly
 rather than breaking — `/drill` and `/listen` explain which half is missing,
 voice notes get a "I can't listen yet", and `implementedModes()` keeps the
