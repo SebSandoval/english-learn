@@ -3,7 +3,9 @@ import "server-only";
 import { db } from "@/lib/db/client";
 import { closeOpenSessions, startSession } from "@/lib/db/queries";
 import type { Level, User } from "@/lib/db/types";
+import { masteredCount, readStreak } from "@/lib/engagement/streak";
 import { openingTurn } from "@/lib/modes";
+import { chooseMode } from "@/lib/modes/selector";
 import { esc } from "@/lib/telegram/client";
 import { formatTutorReply } from "@/lib/telegram/format";
 
@@ -12,11 +14,6 @@ const NOT_READY: Record<string, string> = {
   review: "Spaced review isn't wired up yet — it's next. Use /chat for now.",
   drill: "Voice drills need the audio layer, which is the last piece. Soon.",
   listen: "Listening exercises need the audio layer too. Coming.",
-  quick: "Quick mode arrives with the streak system. Use /chat meanwhile.",
-  streak: "Streak tracking is being built right now. Almost there.",
-  schedule: "Scheduling arrives with the reminder system.",
-  pause: "Nothing to pause yet — I'm not sending reminders so far.",
-  practice: "Automatic mode selection comes with the reminder system. Use /chat.",
 };
 
 const LEVELS: Record<string, Level> = {
@@ -60,6 +57,24 @@ export async function handleCommand(user: User, text: string): Promise<CommandRe
 
     case "vocab":
       return { text: await listVocabulary(user) };
+
+    case "streak":
+      return { text: await showStreak(user) };
+
+    case "practice":
+      return { text: await startPractice(user, false) };
+
+    case "quick":
+      return { text: await startPractice(user, true) };
+
+    case "schedule":
+      return { text: await changeSchedule(user, args) };
+
+    case "pause":
+      return { text: await togglePause(user, args[0]) };
+
+    case "resume":
+      return { text: await togglePause(user, "off") };
 
     default:
       return {
@@ -140,6 +155,82 @@ async function listMistakes(user: User): Promise<string> {
   });
 
   return `📝 <b>What you're working on</b>\n\n${lines.join("\n\n")}`;
+}
+
+async function showStreak(user: User): Promise<string> {
+  const [streak, mastered] = await Promise.all([readStreak(user), masteredCount(user.id)]);
+
+  if (streak.totalSessions === 0) {
+    return "No streak yet — it starts the first day you practice. Send /chat.";
+  }
+
+  const lines = [
+    streak.current > 0
+      ? `🔥 <b>${streak.current} day${streak.current === 1 ? "" : "s"}</b> running`
+      : "Streak's at zero right now — one session today restarts it.",
+    `Best ever: <b>${streak.best}</b>  ·  Sessions: <b>${streak.totalSessions}</b>`,
+  ];
+
+  if (mastered > 0) {
+    lines.push(`Fully mastered: <b>${mastered}</b> item${mastered === 1 ? "" : "s"}`);
+  }
+  if (streak.daysSince === 0) lines.push("\nAlready practised today. ✅");
+
+  return lines.join("\n");
+}
+
+/** `/practice` picks the mode for you; `/quick` forces the two-minute version. */
+async function startPractice(user: User, quick: boolean): Promise<string> {
+  const choice = await chooseMode(user);
+  const session = await startSession(user.id, choice.mode, { quick_mode: quick });
+
+  const instruction = quick
+    ? "Open a two-minute session. One single question they can answer in one short " +
+      "message. Say up front that this is the quick version and that it counts. " +
+      "Two sentences, no more."
+    : "Open the session. Bring the topic yourself, and end with something easy to " +
+      "reply to but impossible to answer in one word.";
+
+  return formatTutorReply(await openingTurn(user, session, instruction));
+}
+
+async function changeSchedule(user: User, args: string[]): Promise<string> {
+  const range = args.join(" ").match(/(\d{1,2}):?(\d{2})?\s*(?:-|to|–)\s*(\d{1,2}):?(\d{2})?/);
+
+  if (!range) {
+    return (
+      `I contact you between <b>${user.ventana_inicio.slice(0, 5)}</b> and ` +
+      `<b>${user.ventana_fin.slice(0, 5)}</b> (${user.zona_horaria}).\n\n` +
+      "To change it: <code>/schedule 19:00-21:30</code>\n" +
+      "It's a window, not an exact time — I'll show up somewhere inside it."
+    );
+  }
+
+  const pad = (h: string, m?: string) => `${h.padStart(2, "0")}:${(m ?? "00").padStart(2, "0")}`;
+  const start = pad(range[1], range[2]);
+  const end = pad(range[3], range[4]);
+
+  if (Number(range[1]) > 23 || Number(range[3]) > 23) {
+    return "Those aren't real hours. Try something like <code>/schedule 19:00-21:30</code>.";
+  }
+
+  await db()
+    .from("usuarios")
+    .update({ ventana_inicio: start, ventana_fin: end })
+    .eq("id", user.id);
+
+  return `Done — I'll reach out between <b>${start}</b> and <b>${end}</b>.`;
+}
+
+async function togglePause(user: User, arg?: string): Promise<string> {
+  const resuming = arg === "off" || arg === "resume";
+
+  await db().from("usuarios").update({ activo: resuming }).eq("id", user.id);
+
+  return resuming
+    ? "Reminders back on. I'll bother you again — that's the point."
+    : "Reminders off. You can still message me any time, and your streak keeps its " +
+        "record. Send /resume when you want me back.";
 }
 
 async function listVocabulary(user: User): Promise<string> {

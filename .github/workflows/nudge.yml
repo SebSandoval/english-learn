@@ -1,0 +1,44 @@
+name: nudge
+
+# Vercel Hobby caps cron at one run per day, which can't serve a time-window
+# reminder. GitHub Actions does the scheduling instead and just pokes the
+# endpoint; all the "should we contact them right now?" logic lives in
+# /api/nudge, which is safe to call at any time.
+on:
+  schedule:
+    # Every 30 minutes. GitHub can delay runs during peak load, which is fine:
+    # the endpoint checks the user's own window rather than trusting the clock.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: "Dry run — decide but don't send"
+        type: boolean
+        default: false
+
+jobs:
+  nudge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the nudge endpoint
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::APP_URL variable or CRON_SECRET secret is not set"
+            exit 1
+          fi
+
+          URL="$APP_URL/api/nudge"
+          if [ "${{ inputs.dry }}" = "true" ]; then URL="$URL?dry=1"; fi
+
+          RESPONSE=$(curl -sS --fail-with-body --max-time 120 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$URL")
+
+          echo "$RESPONSE"
+          echo "### Nudge run" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          echo "$RESPONSE" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

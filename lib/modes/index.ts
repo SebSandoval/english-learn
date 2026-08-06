@@ -14,6 +14,7 @@ import {
   updateSessionContext,
 } from "@/lib/db/queries";
 import type { Session, User } from "@/lib/db/types";
+import { markNudgeAnswered, registerPractice } from "@/lib/engagement/streak";
 import { callLlm, type LlmMessage } from "@/lib/llm/openrouter";
 import { buildTutorPrompt } from "@/lib/llm/prompts/tutor";
 import { parseTutorReply, type TutorReply } from "@/lib/llm/schemas";
@@ -42,16 +43,24 @@ export async function processTurn(input: TurnInput): Promise<TutorReply> {
     audioPath: input.audioPath,
   });
 
-  const [history, previousSummary] = await Promise.all([
+  // Any user turn counts as practice, in any mode. Idempotent within the day.
+  const [streak, history, previousSummary] = await Promise.all([
+    registerPractice(user),
     recentHistory(session.id, MESSAGE_WINDOW),
     session.resumen ? Promise.resolve(session.resumen) : latestSummary(user.id),
   ]);
+
+  // Closes the loop on the reminder that produced this session, so we can tell
+  // which tones actually get answered.
+  if (session.contexto?.from_nudge) {
+    await markNudgeAnswered(session.id).catch(() => {});
+  }
 
   const system = buildTutorPrompt({
     level: user.nivel,
     mode: session.modo,
     name: user.nombre,
-    streak: input.streak,
+    streak: input.streak ?? streak.current,
     previousSummary,
     context: serializeModeContext(session),
   });
