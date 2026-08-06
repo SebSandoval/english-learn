@@ -18,6 +18,11 @@ import { markNudgeAnswered, registerPractice } from "@/lib/engagement/streak";
 import { callLlm, type LlmMessage } from "@/lib/llm/openrouter";
 import { buildTutorPrompt } from "@/lib/llm/prompts/tutor";
 import { parseTutorReply, type TutorReply } from "@/lib/llm/schemas";
+import {
+  advance as advanceReview,
+  describeContext as describeReview,
+  readContext as readReviewContext,
+} from "@/lib/modes/spaced-review";
 
 export interface TurnInput {
   user: User;
@@ -91,15 +96,56 @@ export async function processTurn(input: TurnInput): Promise<TutorReply> {
 
   await compressIfNeeded(session);
 
-  if (reply.end_session) {
+  // Review scheduling happens after the reply is built, so a grading failure
+  // can never cost the student their answer.
+  const queueExhausted = await gradeIfReviewing(user, session, reply);
+
+  if (reply.end_session || queueExhausted) {
     await closeOpenSessions(user.id);
   }
 
   return reply;
 }
 
-/** Serializes the mode's context so it can be injected into the prompt. */
+/** Returns true when the review queue just ran out and the session should close. */
+async function gradeIfReviewing(
+  user: User,
+  session: Session,
+  reply: TutorReply,
+): Promise<boolean> {
+  if (session.modo !== "spaced_review") return false;
+
+  const context = readReviewContext(session);
+  if (!context) return false;
+
+  try {
+    const next = await advanceReview(
+      user,
+      session,
+      context,
+      reply.review_quality,
+      reply.review_item_id,
+    );
+    return next === null;
+  } catch (e) {
+    console.error("[srs] grading failed:", e);
+    return false;
+  }
+}
+
+/**
+ * Serializes the mode's context for the prompt.
+ *
+ * Spaced review gets a hand-written rendering rather than raw JSON: the model
+ * must see the current item and the next one, and must NOT see the rest of the
+ * queue, or it leaks upcoming answers into the current question.
+ */
 function serializeModeContext(session: Session): string | undefined {
+  if (session.modo === "spaced_review") {
+    const review = readReviewContext(session);
+    return review ? describeReview(review) : undefined;
+  }
+
   const ctx = session.contexto;
   if (!ctx || Object.keys(ctx).length === 0) return undefined;
   return `## Mode context\n${JSON.stringify(ctx, null, 2)}`;

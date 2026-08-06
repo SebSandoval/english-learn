@@ -2,13 +2,14 @@ import "server-only";
 
 import { db } from "@/lib/db/client";
 import { latestSummary, startSession } from "@/lib/db/queries";
-import type { User } from "@/lib/db/types";
+import type { PracticeMode, User } from "@/lib/db/types";
 import { decideTone } from "@/lib/engagement/nudge-tone";
 import { masteredCount, readStreak } from "@/lib/engagement/streak";
 import { localDate, localTime, localWeekday, withinWindow } from "@/lib/engagement/time";
 import { callLlm } from "@/lib/llm/openrouter";
 import { buildNudgePrompt } from "@/lib/llm/prompts/nudge";
 import { chooseMode } from "@/lib/modes/selector";
+import { buildQueue } from "@/lib/srs/queue";
 import { sendMessage } from "@/lib/telegram/client";
 
 export type SkipReason =
@@ -57,7 +58,12 @@ export async function nudgeUser(user: User, now = new Date()): Promise<NudgeOutc
 
   const decision = decideTone(streak, null);
 
-  const message = await writeMessage(user, streak.daysSince, decision, choice.mode, {
+  // Review needs a queue. If nothing is actually due by the time we get here,
+  // fall back to conversation rather than opening an empty review session.
+  const review = choice.mode === "spaced_review" ? await buildQueue(user) : [];
+  const mode = choice.mode === "spaced_review" && !review.length ? "free_conversation" : choice.mode;
+
+  const message = await writeMessage(user, streak.daysSince, decision, mode, {
     mastered,
     best: streak.best,
     total: streak.totalSessions,
@@ -66,9 +72,10 @@ export async function nudgeUser(user: User, now = new Date()): Promise<NudgeOutc
 
   // The session opens before the message goes out: whatever they reply lands in
   // the mode we proposed, instead of defaulting to free conversation.
-  const session = await startSession(user.id, choice.mode, {
+  const session = await startSession(user.id, mode, {
     from_nudge: true,
     quick_mode: decision.offerQuickMode,
+    ...(review.length ? { review: { items: review, index: 0, ungraded: 0 } } : {}),
   });
 
   await sendMessage(user.telegram_chat_id, message);
@@ -76,7 +83,7 @@ export async function nudgeUser(user: User, now = new Date()): Promise<NudgeOutc
   await db().from("nudges").insert({
     usuario_id: user.id,
     tono: decision.tone,
-    modo_propuesto: choice.mode,
+    modo_propuesto: mode,
     // A first-ever nudge has no gap to record; 0 reads correctly in the history.
     dias_sin_practicar: streak.daysSince ?? 0,
     mensaje: message,
@@ -87,7 +94,7 @@ export async function nudgeUser(user: User, now = new Date()): Promise<NudgeOutc
     sent: true,
     userId: user.id,
     tone: decision.tone,
-    mode: choice.mode,
+    mode,
     daysSince: streak.daysSince,
   };
 }
@@ -109,7 +116,7 @@ async function writeMessage(
   user: User,
   daysSince: number | null,
   decision: ReturnType<typeof decideTone>,
-  mode: Awaited<ReturnType<typeof chooseMode>>["mode"],
+  mode: PracticeMode,
   facts: { mastered: number; best: number; total: number; lastTopic: string | null },
 ): Promise<string> {
   const prompt = buildNudgePrompt({

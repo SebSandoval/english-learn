@@ -32,6 +32,16 @@ export const tutorReplySchema = z.object({
   new_vocab: z.array(vocabSchema).max(3).default([]),
   /** SPACED REVIEW only: the SM-2 quality grade for the user's answer. */
   review_quality: z.number().int().min(0).max(5).nullish(),
+  /**
+   * SPACED REVIEW only: which item the grade refers to.
+   *
+   * Without this we would assume the model asked whichever item our own index
+   * pointed at, and grade that one. When the model asks something else — which
+   * it does — the grade lands on the wrong item and silently corrupts its
+   * schedule. Making the model name the item turns a silent error into a
+   * detectable mismatch.
+   */
+  review_item_id: z.string().nullish(),
   end_session: z.boolean().default(false),
 });
 
@@ -65,6 +75,7 @@ export function parseTutorReply(raw: string): TutorReply {
       corrections: [],
       new_vocab: [],
       review_quality: null,
+      review_item_id: null,
       end_session: false,
     };
   }
@@ -74,6 +85,7 @@ export function parseTutorReply(raw: string): TutorReply {
     corrections: salvage(obj.corrections, coerceCorrection, correctionSchema),
     new_vocab: salvage(obj.new_vocab, coerceVocab, vocabSchema),
     review_quality: asGrade(obj.review_quality),
+    review_item_id: typeof obj.review_item_id === "string" ? obj.review_item_id : null,
     end_session: obj.end_session === true,
   };
 }

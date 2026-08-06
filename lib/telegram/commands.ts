@@ -6,12 +6,12 @@ import type { Level, User } from "@/lib/db/types";
 import { masteredCount, readStreak } from "@/lib/engagement/streak";
 import { openingTurn } from "@/lib/modes";
 import { chooseMode } from "@/lib/modes/selector";
+import { openingInstruction, startReview } from "@/lib/modes/spaced-review";
 import { esc } from "@/lib/telegram/client";
 import { formatTutorReply } from "@/lib/telegram/format";
 
 /** Phases not built yet: say so plainly instead of failing silently. */
 const NOT_READY: Record<string, string> = {
-  review: "Spaced review isn't wired up yet — it's next. Use /chat for now.",
   drill: "Voice drills need the audio layer, which is the last piece. Soon.",
   listen: "Listening exercises need the audio layer too. Coming.",
 };
@@ -57,6 +57,9 @@ export async function handleCommand(user: User, text: string): Promise<CommandRe
 
     case "vocab":
       return { text: await listVocabulary(user) };
+
+    case "review":
+      return { text: await startReviewSession(user) };
 
     case "streak":
       return { text: await showStreak(user) };
@@ -157,6 +160,38 @@ async function listMistakes(user: User): Promise<string> {
   return `📝 <b>What you're working on</b>\n\n${lines.join("\n\n")}`;
 }
 
+async function startReviewSession(user: User): Promise<string> {
+  const started = await startReview(user);
+
+  if (!started) {
+    const upcoming = await nextDueDate(user.id);
+    return upcoming
+      ? `Nothing due today — your next review lands on <b>${upcoming}</b>. ` +
+          "Spacing them out is the point; cramming today would undo it. Send /chat instead."
+      : "Nothing to review yet. Talk to me for a while and I'll collect the things " +
+          "you get wrong — those become your review deck.";
+  }
+
+  const reply = await openingTurn(
+    user,
+    started.session,
+    openingInstruction(started.context),
+  );
+  return formatTutorReply(reply);
+}
+
+async function nextDueDate(userId: string): Promise<string | null> {
+  const { data } = await db()
+    .from("srs_pendientes")
+    .select("proxima_revision")
+    .eq("usuario_id", userId)
+    .order("proxima_revision", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  return data?.proxima_revision ?? null;
+}
+
 async function showStreak(user: User): Promise<string> {
   const [streak, mastered] = await Promise.all([readStreak(user), masteredCount(user.id)]);
 
@@ -182,6 +217,13 @@ async function showStreak(user: User): Promise<string> {
 /** `/practice` picks the mode for you; `/quick` forces the two-minute version. */
 async function startPractice(user: User, quick: boolean): Promise<string> {
   const choice = await chooseMode(user);
+
+  // Review needs its queue built before the session exists; delegate rather
+  // than opening an empty spaced_review session here.
+  if (choice.mode === "spaced_review" && !quick) {
+    return startReviewSession(user);
+  }
+
   const session = await startSession(user.id, choice.mode, { quick_mode: quick });
 
   const instruction = quick

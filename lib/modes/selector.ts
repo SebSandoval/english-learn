@@ -9,9 +9,9 @@ import { daysBetween, localDate } from "@/lib/engagement/time";
  * returns one that can actually run — a nudge proposing a mode that answers
  * "not built yet" would be worse than no nudge at all.
  *
- * Phase 4 adds spaced_review; phase 5 adds voice_drill and listening.
+ * Phase 5 adds voice_drill and listening.
  */
-export const IMPLEMENTED_MODES: PracticeMode[] = ["free_conversation"];
+export const IMPLEMENTED_MODES: PracticeMode[] = ["free_conversation", "spaced_review"];
 
 const ALL_MODES: PracticeMode[] = [
   "free_conversation",

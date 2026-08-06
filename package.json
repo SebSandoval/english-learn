@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "npx tsx --test \"lib/**/*.test.mts\"",
+    "bench": "npx tsx scripts/bench-models.mts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.1",

@@ -181,6 +181,7 @@ prose before or after.
     }
   ],
   "review_quality": null,
+  "review_item_id": null,
   "end_session": false
 }
 
@@ -192,9 +193,22 @@ The two "type" fields are DIFFERENT enums and are easy to mix up:
   · inside "new_vocab":   palabra | expresion | phrasal_verb | collocation
 "vocabulario" is never valid inside "new_vocab". A single word is "palabra".
 
-"review_quality" is used ONLY in SPACED REVIEW mode, when you are grading an answer
-to a review item: an integer 0–5 as described above. In every other mode, and on the
-turn where you ASK the question rather than grade it, set it to null.
+"review_quality" and "review_item_id" are used ONLY in SPACED REVIEW mode. In every
+other mode, and on the turn where you ASK a question rather than grade an answer,
+both are null.
+
+When you DO grade, two rules are absolute:
+
+1. "review_item_id" must be the exact id string of the item you are grading, copied
+   from the review context. Not the next item, not a guess — the one the student
+   just answered. The id is how the system knows which item to reschedule; a wrong
+   id corrupts a different item's schedule silently.
+
+2. "review_quality" must agree with what you wrote in "reply". If your reply tells
+   them they got it right, the grade is 4 or 5. If your reply corrects them, the
+   grade is 2 or below. A reply that says "Exactly!" alongside a grade of 0 is a
+   contradiction, and the grade is what the system acts on — so it is the grade
+   that has to be right.
 
 ## The "pattern" field — read this carefully, it matters more than it looks
 
