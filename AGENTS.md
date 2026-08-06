@@ -86,6 +86,40 @@ and `tts_provider`.
   Groq is handed a rewritten `.ogg` filename because Telegram's `.oga` is
   rejected on the extension alone.
 
+## Phase 6 — provider chains with failover (agreed, not started)
+
+Sebastián asked for "varios flujos y dependiendo de cuál esté conectado se usa".
+Most of that already exists and should NOT be rebuilt: `OPENROUTER_MODEL` /
+`OPENROUTER_MODEL_FALLBACK` already form an ordered chain, and `sttProvider()` /
+`ttsProvider()` already select on key presence.
+
+The real gap is **failover in voice**. When Deepgram fails mid-turn, `deliver()`
+degrades straight to text without trying Google, even with the key present —
+while the LLM does retry down its chain. Fix by giving `lib/audio/` the shape
+`lib/llm/openrouter.ts` already has: an ordered list from env, tried in order,
+logging which provider answered.
+
+**Explicitly out of scope: a toggle UI or feature-flag service.** For a
+single-user bot the env var is the switch, and it cannot break at runtime.
+Decided 2026-08-06.
+
+## The front page
+
+`app/page.tsx` is the manual, not marketing — a reference card for when he
+forgets a command. Copy is Spanish; anything the bot itself says stays English,
+because that is what he will actually see on screen.
+
+Content is mirrored from the code and goes stale silently: the command list from
+`lib/telegram/commands.ts`, the four modes from `lib/llm/prompts/tutor.ts`, and
+the interval ladder from `lib/srs/sm2.ts` (the bar widths ARE the day counts, so
+changing `LADDER` there means changing it here). Update both together.
+
+Design notes worth keeping: `--signal` and `--signal-ink` are the same amber for
+two jobs — the bright one fails contrast as text on the light page, so text uses
+the darker one. The hero thread animates once on load and the correction block
+is deliberately detached from the reply above it; that gap is the product's
+thesis, not decoration.
+
 ## Deferred, agreed, not yet done
 
 **Rename the database to English.** Table and column names are still Spanish
