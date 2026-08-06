@@ -48,7 +48,7 @@ export async function GET() {
  * that use them, which makes deploys impossible to debug from outside. This
  * distinguishes the two without ever revealing a value.
  */
-function configured(): Record<string, boolean | string> {
+function configured(): Record<string, boolean | string | number> {
   return {
     openrouter: Boolean(env.OPENROUTER_API_KEY),
     telegram_token: Boolean(env.TELEGRAM_BOT_TOKEN),
