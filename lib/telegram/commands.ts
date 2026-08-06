@@ -1,20 +1,16 @@
 import "server-only";
 
+import { voiceCapabilities } from "@/lib/audio";
 import { db } from "@/lib/db/client";
 import { closeOpenSessions, startSession } from "@/lib/db/queries";
-import type { Level, User } from "@/lib/db/types";
+import type { Level, PracticeMode, Session, User } from "@/lib/db/types";
 import { masteredCount, readStreak } from "@/lib/engagement/streak";
+import type { TutorReply } from "@/lib/llm/schemas";
 import { openingTurn } from "@/lib/modes";
 import { chooseMode } from "@/lib/modes/selector";
+import { DRILL_OPENING, LISTENING_OPENING } from "@/lib/modes/voice";
 import { openingInstruction, startReview } from "@/lib/modes/spaced-review";
 import { esc } from "@/lib/telegram/client";
-import { formatTutorReply } from "@/lib/telegram/format";
-
-/** Phases not built yet: say so plainly instead of failing silently. */
-const NOT_READY: Record<string, string> = {
-  drill: "Voice drills need the audio layer, which is the last piece. Soon.",
-  listen: "Listening exercises need the audio layer too. Coming.",
-};
 
 const LEVELS: Record<string, Level> = {
   beginner: "principiante",
@@ -31,60 +27,79 @@ const LEVEL_NAME: Record<Level, string> = {
   avanzado: "advanced",
 };
 
-export interface CommandResult {
-  text: string;
-}
+/**
+ * A command either answers with plain text, or opens a session and hands back
+ * the tutor's first turn.
+ *
+ * The distinction exists because of voice: a turn in a spoken mode has to be
+ * synthesized and sent as a voice note, and only the caller knows how to do
+ * that. Formatting it to a string here would make it unspeakable.
+ */
+export type CommandResult =
+  | { kind: "text"; text: string }
+  | { kind: "turn"; mode: PracticeMode; reply: TutorReply };
+
+const text = (value: string): CommandResult => ({ kind: "text", text: value });
+const turn = (session: Session, reply: TutorReply): CommandResult => ({
+  kind: "turn",
+  mode: session.modo,
+  reply,
+});
 
 /** Returns `null` when the text isn't a command and should be treated as conversation. */
-export async function handleCommand(user: User, text: string): Promise<CommandResult | null> {
-  if (!text.startsWith("/")) return null;
+export async function handleCommand(user: User, input: string): Promise<CommandResult | null> {
+  if (!input.startsWith("/")) return null;
 
-  const [raw, ...args] = text.slice(1).split(/\s+/);
+  const [raw, ...args] = input.slice(1).split(/\s+/);
   const command = raw.split("@")[0].toLowerCase();
 
   switch (command) {
     case "start":
-      return { text: welcome(user) };
+      return text(welcome(user));
 
     case "chat":
-      return { text: await startConversation(user) };
+      return startConversation(user);
 
     case "level":
-      return { text: await changeLevel(user, args[0]) };
+      return text(await changeLevel(user, args[0]));
 
     case "mistakes":
-      return { text: await listMistakes(user) };
+      return text(await listMistakes(user));
 
     case "vocab":
-      return { text: await listVocabulary(user) };
+      return text(await listVocabulary(user));
 
     case "review":
-      return { text: await startReviewSession(user) };
+      return startReviewSession(user);
+
+    case "drill":
+      return startVoiceMode(user, "voice_drill");
+
+    case "listen":
+      return startVoiceMode(user, "listening");
 
     case "streak":
-      return { text: await showStreak(user) };
+      return text(await showStreak(user));
 
     case "practice":
-      return { text: await startPractice(user, false) };
+      return startPractice(user, false);
 
     case "quick":
-      return { text: await startPractice(user, true) };
+      return startPractice(user, true);
 
     case "schedule":
-      return { text: await changeSchedule(user, args) };
+      return text(await changeSchedule(user, args));
 
     case "pause":
-      return { text: await togglePause(user, args[0]) };
+      return text(await togglePause(user, args[0]));
 
     case "resume":
-      return { text: await togglePause(user, "off") };
+      return text(await togglePause(user, "off"));
 
     default:
-      return {
-        text:
-          NOT_READY[command] ??
-          "I don't know that one. Try /chat to start talking, or /mistakes to see what you're working on.",
-      };
+      return text(
+        "I don't know that one. Try /chat to start talking, or /mistakes to see what you're working on.",
+      );
   }
 }
 
@@ -100,11 +115,13 @@ function welcome(user: User): string {
       "<code>/level beginner</code>, <code>/level intermediate</code> or " +
       "<code>/level advanced</code>.",
     "",
-    "Send /chat and let's start, or just write me something.",
+    "Send /chat and let's start, or just write me something. Send me a voice " +
+      "note any time and I'll answer out loud — or use /drill to speak on demand " +
+      "and /listen to train your ear.",
   ].join("\n");
 }
 
-async function startConversation(user: User): Promise<string> {
+async function startConversation(user: User): Promise<CommandResult> {
   const session = await startSession(user.id, "free_conversation");
   const reply = await openingTurn(
     user,
@@ -114,7 +131,37 @@ async function startConversation(user: User): Promise<string> {
       "sentences, then a question that's easy to answer but hard to answer in " +
       "one word.",
   );
-  return formatTutorReply(reply);
+  return turn(session, reply);
+}
+
+/**
+ * `/drill` and `/listen`. Both refuse rather than degrade: a voice drill
+ * answered in writing is just a slower conversation, and a listening exercise
+ * delivered as text is a reading exercise.
+ */
+async function startVoiceMode(user: User, mode: "voice_drill" | "listening"): Promise<CommandResult> {
+  const { listen, speak } = voiceCapabilities();
+
+  if (!speak) {
+    return text(
+      "I can't speak yet — the text-to-speech key isn't configured on my side. " +
+        "Send /chat and we'll practise in writing.",
+    );
+  }
+  if (mode === "voice_drill" && !listen) {
+    return text(
+      "I can talk but I can't listen yet — the transcription key isn't configured. " +
+        "Try /listen instead, that one only needs my voice.",
+    );
+  }
+
+  const session = await startSession(user.id, mode);
+  const reply = await openingTurn(
+    user,
+    session,
+    mode === "voice_drill" ? DRILL_OPENING : LISTENING_OPENING,
+  );
+  return turn(session, reply);
 }
 
 async function changeLevel(user: User, arg?: string): Promise<string> {
@@ -160,16 +207,18 @@ async function listMistakes(user: User): Promise<string> {
   return `📝 <b>What you're working on</b>\n\n${lines.join("\n\n")}`;
 }
 
-async function startReviewSession(user: User): Promise<string> {
+async function startReviewSession(user: User): Promise<CommandResult> {
   const started = await startReview(user);
 
   if (!started) {
     const upcoming = await nextDueDate(user.id);
-    return upcoming
-      ? `Nothing due today — your next review lands on <b>${upcoming}</b>. ` +
-          "Spacing them out is the point; cramming today would undo it. Send /chat instead."
-      : "Nothing to review yet. Talk to me for a while and I'll collect the things " +
-          "you get wrong — those become your review deck.";
+    return text(
+      upcoming
+        ? `Nothing due today — your next review lands on <b>${upcoming}</b>. ` +
+            "Spacing them out is the point; cramming today would undo it. Send /chat instead."
+        : "Nothing to review yet. Talk to me for a while and I'll collect the things " +
+            "you get wrong — those become your review deck.",
+    );
   }
 
   const reply = await openingTurn(
@@ -177,7 +226,7 @@ async function startReviewSession(user: User): Promise<string> {
     started.session,
     openingInstruction(started.context),
   );
-  return formatTutorReply(reply);
+  return turn(started.session, reply);
 }
 
 async function nextDueDate(userId: string): Promise<string | null> {
@@ -215,7 +264,7 @@ async function showStreak(user: User): Promise<string> {
 }
 
 /** `/practice` picks the mode for you; `/quick` forces the two-minute version. */
-async function startPractice(user: User, quick: boolean): Promise<string> {
+async function startPractice(user: User, quick: boolean): Promise<CommandResult> {
   const choice = await chooseMode(user);
 
   // Review needs its queue built before the session exists; delegate rather
@@ -230,10 +279,19 @@ async function startPractice(user: User, quick: boolean): Promise<string> {
     ? "Open a two-minute session. One single question they can answer in one short " +
       "message. Say up front that this is the quick version and that it counts. " +
       "Two sentences, no more."
-    : "Open the session. Bring the topic yourself, and end with something easy to " +
-      "reply to but impossible to answer in one word.";
+    : openingFor(choice.mode);
 
-  return formatTutorReply(await openingTurn(user, session, instruction));
+  return turn(session, await openingTurn(user, session, instruction));
+}
+
+function openingFor(mode: PracticeMode): string {
+  if (mode === "voice_drill") return DRILL_OPENING;
+  if (mode === "listening") return LISTENING_OPENING;
+
+  return (
+    "Open the session. Bring the topic yourself, and end with something easy to " +
+    "reply to but impossible to answer in one word."
+  );
 }
 
 async function changeSchedule(user: User, args: string[]): Promise<string> {

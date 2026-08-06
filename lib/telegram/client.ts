@@ -1,3 +1,4 @@
+import type { AudioClip } from "@/lib/audio/types";
 import { requireEnv } from "@/lib/env";
 
 function base(): string {
@@ -43,6 +44,46 @@ export async function sendMessage(chatId: number, text: string): Promise<void> {
       link_preview_options: { is_disabled: true },
     });
   }
+}
+
+/**
+ * Sends audio as a voice note — the round bubble with a waveform, playable in
+ * place. Anything other than Ogg/Opus arrives as a file attachment instead,
+ * which is why the TTS provider is pinned to OGG_OPUS.
+ *
+ * Multipart, so it can't go through `call`.
+ */
+export async function sendVoice(chatId: number, clip: AudioClip, caption?: string): Promise<void> {
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  form.append("voice", new Blob([clip.data], { type: clip.mimeType }), clip.filename ?? "voice.ogg");
+  if (caption) {
+    // Telegram truncates captions at 1024 characters and drops the message if
+    // the HTML is unbalanced, so callers pass short, already-escaped text.
+    form.append("caption", caption.slice(0, 1024));
+    form.append("parse_mode", "HTML");
+  }
+
+  const res = await fetch(`${base()}/sendVoice`, { method: "POST", body: form });
+  const data = (await res.json()) as { ok: boolean; description?: string };
+  if (!data.ok) throw new Error(`Telegram sendVoice: ${data.description}`);
+}
+
+/** Downloads a file the user sent us. Telegram links expire, so we fetch on demand. */
+export async function downloadFile(fileId: string): Promise<AudioClip> {
+  const file = await call<{ file_path?: string }>("getFile", { file_id: fileId });
+  if (!file.file_path) throw new Error("Telegram getFile returned no path.");
+
+  const res = await fetch(
+    `https://api.telegram.org/file/bot${requireEnv("TELEGRAM_BOT_TOKEN")}/${file.file_path}`,
+  );
+  if (!res.ok) throw new Error(`Telegram file download: ${res.status}`);
+
+  return {
+    data: await res.arrayBuffer(),
+    // Voice notes come back as audio/ogg; the header is occasionally absent.
+    mimeType: res.headers.get("content-type")?.split(";")[0] ?? "audio/ogg",
+  };
 }
 
 /** The "typing…" indicator. Lasts ~5s; re-sent during long operations. */

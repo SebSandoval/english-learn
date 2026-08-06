@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 import { db } from "@/lib/db/client";
 import { env } from "@/lib/env";
+import { implementedModes } from "@/lib/modes/selector";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +63,11 @@ function configured(): Record<string, boolean | string | number> {
     cron_secret_fp: fingerprint(env.CRON_SECRET),
     groq: Boolean(env.GROQ_API_KEY),
     google_tts: Boolean(env.GOOGLE_TTS_API_KEY),
+    // Which spoken modes this deploy can actually offer. Half-configured voice
+    // is a normal state, and this is how you tell which half.
+    voice_modes: implementedModes()
+      .filter((m) => m === "voice_drill" || m === "listening")
+      .join(",") || "none",
     model: env.OPENROUTER_MODEL,
   };
 }

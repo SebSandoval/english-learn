@@ -16,7 +16,20 @@ const LABEL: Record<string, string> = {
  * which is exactly what we're training.
  */
 export function formatTutorReply(r: TutorReply): string {
-  const blocks = [esc(r.reply.trim())];
+  const extras = formatExtras(r);
+  const conversation = esc(r.reply.trim());
+  return extras ? `${conversation}\n\n${extras}` : conversation;
+}
+
+/**
+ * The feedback blocks on their own, without the conversational reply.
+ *
+ * Spoken modes need this split: the reply goes out as audio, but corrections
+ * and vocabulary have to stay written — spelling is half the point of a
+ * correction, and nobody can re-listen to a word they didn't catch.
+ */
+export function formatExtras(r: TutorReply): string | null {
+  const blocks: string[] = [];
 
   if (r.corrections.length) {
     const items = r.corrections.map((c) => {
@@ -42,5 +55,5 @@ export function formatTutorReply(r: TutorReply): string {
     blocks.push(`💡 <b>New for you</b>\n\n${items.join("\n\n")}`);
   }
 
-  return blocks.join("\n\n");
+  return blocks.length ? blocks.join("\n\n") : null;
 }

@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { activeSession, getOrCreateUser, openSession, startSession } from "@/lib/db/queries";
-import type { Session, User } from "@/lib/db/types";
+import type { PracticeMode, Session, User } from "@/lib/db/types";
 import { openingTurn, processTurn } from "@/lib/modes";
 import { openingInstruction, startReview } from "@/lib/modes/spaced-review";
+import { DRILL_OPENING, LISTENING_OPENING } from "@/lib/modes/voice";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -18,7 +19,7 @@ const bodySchema = z.object({
    * defaults to free conversation, which makes the other modes unreachable
    * outside Telegram.
    */
-  mode: z.enum(["free_conversation", "spaced_review"]).optional(),
+  mode: z.enum(["free_conversation", "spaced_review", "voice_drill", "listening"]).optional(),
   /** Abandons any open session and starts fresh. */
   restart: z.boolean().optional(),
 });
@@ -87,7 +88,7 @@ interface ResolvedSession {
 /** Null means the requested mode had nothing to work with. */
 async function resolveSession(
   user: User,
-  mode: "free_conversation" | "spaced_review" | undefined,
+  mode: PracticeMode | undefined,
   restart: boolean,
 ): Promise<ResolvedSession | null> {
   if (!restart) {
@@ -102,6 +103,17 @@ async function resolveSession(
     return started
       ? { session: started.session, opening: openingInstruction(started.context) }
       : null;
+  }
+
+  // The voice modes are reachable here on purpose, in text: it's the only way
+  // to inspect what the tutor would have said before paying for synthesis.
+  // What comes back is the script, not the audio — that's /api/voice.
+  if (mode === "voice_drill" || mode === "listening") {
+    const session = await startSession(user.id, mode);
+    return {
+      session,
+      opening: mode === "voice_drill" ? DRILL_OPENING : LISTENING_OPENING,
+    };
   }
 
   if (mode) return { session: await startSession(user.id, mode) };

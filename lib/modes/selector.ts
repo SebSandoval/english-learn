@@ -1,17 +1,29 @@
 import "server-only";
 
+import { voiceCapabilities } from "@/lib/audio";
 import { db } from "@/lib/db/client";
 import type { PracticeMode, User } from "@/lib/db/types";
 import { daysBetween, localDate } from "@/lib/engagement/time";
 
 /**
- * Modes wired end to end today. The scorer knows about all four, but only ever
- * returns one that can actually run — a nudge proposing a mode that answers
+ * Modes that can actually run right now. The scorer knows about all four, but
+ * only ever returns one that works — a nudge proposing a mode that answers
  * "not built yet" would be worse than no nudge at all.
  *
- * Phase 5 adds voice_drill and listening.
+ * The voice modes are gated on their keys rather than hardcoded, because voice
+ * can legitimately be half-configured: Groq alone, Google alone, or a key that
+ * gets pulled. VOICE DRILL needs both directions (they speak, the tutor speaks
+ * back); LISTENING only needs the tutor's voice.
  */
-export const IMPLEMENTED_MODES: PracticeMode[] = ["free_conversation", "spaced_review"];
+export function implementedModes(): PracticeMode[] {
+  const { listen, speak } = voiceCapabilities();
+  const modes: PracticeMode[] = ["free_conversation", "spaced_review"];
+
+  if (listen && speak) modes.push("voice_drill");
+  if (speak) modes.push("listening");
+
+  return modes;
+}
 
 const ALL_MODES: PracticeMode[] = [
   "free_conversation",
@@ -82,12 +94,14 @@ export async function chooseMode(user: User): Promise<ModeChoice> {
     scores[mode] = score;
   }
 
+  const available = implementedModes();
+
   // Hard rule on top of the scores: review debt does not get to pile up.
-  if (dueItems >= REVIEW_DEBT_THRESHOLD && IMPLEMENTED_MODES.includes("spaced_review")) {
+  if (dueItems >= REVIEW_DEBT_THRESHOLD && available.includes("spaced_review")) {
     return { mode: "spaced_review", dueItems, scores };
   }
 
-  const mode = IMPLEMENTED_MODES.reduce((best, candidate) =>
+  const mode = available.reduce((best, candidate) =>
     scores[candidate] > scores[best] ? candidate : best,
   );
 

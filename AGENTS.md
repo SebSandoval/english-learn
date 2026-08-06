@@ -23,11 +23,11 @@ Live at https://english-learn-murex.vercel.app · bot **@seb_english_push_bot**
 | 2 · `/api/chat` + Telegram text (FREE CONVERSATION) | ✅ done |
 | 3 · Streak, mode selector, `/api/nudge`, cron | ✅ done |
 | 4 · SPACED REVIEW with SM-2 | ✅ done |
-| 5 · Voice — STT/TTS for VOICE DRILL and LISTENING | ⬜ **next** |
+| 5 · Voice — STT/TTS for VOICE DRILL and LISTENING | ✅ code done, keys pending |
 
-## Phase 5 — the plan already agreed
+## Phase 5 — voice
 
-Decided after benchmarking; do not re-litigate without new evidence:
+Providers, decided after benchmarking; do not re-litigate without new evidence:
 
 - **STT: Groq `whisper-large-v3-turbo`.** Free tier is 2,000 requests/day and
   ~200x real-time. Local Whisper was rejected: Vercel is serverless, the model
@@ -38,17 +38,34 @@ Decided after benchmarking; do not re-litigate without new evidence:
   last two days. Requires a card on the GCP project even though the free tier
   never charges.
 
-Both go behind `STTProvider` / `TTSProvider` interfaces in `lib/audio/`.
+Both sit behind `STTProvider` / `TTSProvider` in `lib/audio/types.ts`. Nothing
+above `lib/audio/` names a vendor.
 
-Manual steps Sebastián still has to do (walk him through them ONE at a time and
-wait for confirmation):
+**Still pending: the two API keys.** Until they land, voice degrades cleanly
+rather than breaking — `/drill` and `/listen` explain which half is missing,
+voice notes get a "I can't listen yet", and `implementedModes()` keeps the
+voice modes out of the nudge rotation. `/api/health` reports `voice_modes`.
+
 1. Groq account → API key → `GROQ_API_KEY` in `.env.local` and Vercel
 2. Google Cloud project → enable Text-to-Speech API → key → `GOOGLE_TTS_API_KEY`
 
-Then: `/api/voice`, Telegram voice notes both directions, `voice_drill` and
-`listening` added to `IMPLEMENTED_MODES` in `lib/modes/selector.ts`, and the
-`NOT_READY` stubs for `/drill` and `/listen` removed from
-`lib/telegram/commands.ts`.
+### How voice actually flows
+
+- **In**: Telegram voice note → `downloadFile` → Groq → the transcript is echoed
+  back to the student in italics, then run through `processTurn` as ordinary
+  text. A voice note with no session open starts a VOICE DRILL; inside a session
+  it stays in that session, so a review item can be answered out loud.
+- **Out**: `lib/telegram/deliver.ts` decides text vs voice from the session mode.
+  VOICE DRILL sends audio *and* the text; LISTENING sends audio only — a
+  transcript underneath turns it into a reading exercise. Every path degrades to
+  text, because losing the audio must never cost the turn.
+- **`speakable()`** strips markdown, HTML and emoji before synthesis. The prompt
+  already asks for spoken prose; this is the guard for when it slips, and it has
+  tests, because the only symptom is the student hearing "asterisk asterisk".
+- **Ogg/Opus end to end.** Google is pinned to `OGG_OPUS` because any other
+  encoding uploads as a file attachment instead of a playable voice bubble, and
+  Groq is handed a rewritten `.ogg` filename because Telegram's `.oga` is
+  rejected on the extension alone.
 
 ## Deferred, agreed, not yet done
 
@@ -78,7 +95,7 @@ queries. Regenerate types after migrating.
 ```bash
 npx tsc --noEmit      # capture the exit code — do NOT pipe through head
 npx eslint app lib scripts
-npm test              # SM-2 scheduler, 9 tests
+npm test              # SM-2 scheduler + speakable(), 17 tests
 npm run build
 ```
 

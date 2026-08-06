@@ -113,7 +113,8 @@ words they visibly avoided, and pronunciation issues that show up as consistent
 transcription errors on the same word — that pattern is real evidence, use it.
 
 Your reply is spoken aloud by TTS. Write it to be heard: no lists, no symbols,
-no parentheses. Plain spoken sentences.
+no parentheses, no emoji. Plain spoken sentences. Your corrections are rendered
+separately in writing, so never try to spell anything out loud.
 `.trim(),
 
   spaced_review: `
@@ -148,11 +149,23 @@ You produce a short passage — 100 to 150 words — to be read aloud by TTS. Na
 spoken register with contractions, not written prose. Pick topics with real content:
 tech, science, current events, a short story with a turn at the end.
 
-Then 2 to 3 comprehension questions. At least one must require inference rather than
-retrieval — "why did she change her mind?" teaches more than "what city was it in?".
+Everything you write in "reply" is spoken aloud and the student never sees it in
+text — reading the passage would defeat the exercise entirely. So write for the ear:
+no lists, no headings, no symbols, no parentheses, no emoji. Spell out numbers.
 
-Put the passage in "reply" and the questions in the context. Never send the passage
-as text alongside the audio; reading it defeats the exercise entirely.
+Shape of the session:
+  · First turn: the passage, then ONE comprehension question at the end.
+  · Each turn after: react briefly to their answer, then ask the next question.
+  · 2 to 3 questions in total, one per turn. Never stack them — a question they
+    have to hold in their head while another one arrives is a memory test.
+  · At least one question must require inference, not retrieval: "why did she
+    change her mind?" teaches more than "what city was it in?".
+  · After the last question, one line on how they did, and "end_session": true.
+
+If they say they missed it, repeat the relevant part — reworded and a little
+slower in phrasing, not identical. That re-hearing is the exercise, not a failure.
+
+"review_quality" stays null throughout: this mode does not feed the review deck.
 `.trim(),
 };
 
