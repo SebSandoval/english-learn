@@ -185,6 +185,16 @@ both dropped for returning invalid JSON.
   the SM-2 tables — without it, spaced review has no real material.
 - **Corrections travel outside `reply`** and are rendered as a separate block,
   so feedback never interrupts conversational flow.
+- **Only `reply` is saved as the assistant turn, never the notes.** So the model
+  re-reads old student messages with no record that it already corrected them,
+  and the same note goes out two and three messages in a row — reworded, which
+  also splits one mistake into several rows in `errores` and resets their SM-2
+  schedule each time. `freshCorrections()` in `lib/llm/corrections.ts` drops any
+  correction whose `wrong_example` doesn't quote the message being answered;
+  `openingTurn` drops all of them, since nobody has spoken yet. The prompt asks
+  for the same thing, this is the guard for when it doesn't comply. Don't "fix"
+  it by feeding the notes back into the history: that spends context on text the
+  student has already read, every turn, forever.
 - **`corrections[].pattern` is a deduplication key.** It must describe the rule
   ("past simple: uses base form instead of past tense"), never quote the
   student. The prompt carries good/bad examples; check them if the mistakes

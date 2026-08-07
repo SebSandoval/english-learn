@@ -16,6 +16,7 @@ import {
 import type { Session, User } from "@/lib/db/types";
 import { markNudgeAnswered, registerPractice } from "@/lib/engagement/streak";
 import { callLlm, type LlmMessage } from "@/lib/llm/chat";
+import { freshCorrections } from "@/lib/llm/corrections";
 import { buildTutorPrompt } from "@/lib/llm/prompts/tutor";
 import { parseTutorReply, type TutorReply } from "@/lib/llm/schemas";
 import {
@@ -96,6 +97,10 @@ export async function processTurn(input: TurnInput): Promise<TutorReply> {
     deadline: input.deadline,
   });
   const reply = parseTutorReply(raw);
+
+  // The history the model sees carries no record of what it already corrected,
+  // so it re-corrects older turns. Anything not quoting THIS message goes.
+  reply.corrections = freshCorrections(reply.corrections, text);
 
   await saveMessage(session.id, "assistant", reply.reply);
 
@@ -241,6 +246,11 @@ export async function openingTurn(
   );
 
   const reply = parseTutorReply(raw);
+
+  // Nobody has said anything yet: any correction here is about a message that
+  // does not exist.
+  reply.corrections = [];
+
   await saveMessage(session.id, "assistant", reply.reply);
   await updateSessionContext(session.id, session.contexto);
 
