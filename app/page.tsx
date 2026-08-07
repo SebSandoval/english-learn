@@ -53,6 +53,7 @@ const COMMAND_GROUPS = [
   {
     title: "Ver",
     items: [
+      { cmd: "/progress", desc: "Si estás mejorando, no si has aparecido." },
       { cmd: "/mistakes", desc: "Tus errores activos, por frecuencia." },
       { cmd: "/vocab", desc: "El vocabulario que te ha enseñado." },
       { cmd: "/streak", desc: "Racha actual, récord y sesiones." },
@@ -202,10 +203,13 @@ export default function Manual() {
             ))}
           </div>
           <p className={styles.aside}>
-            También puedes mandarle una nota de voz sin escribir ningún comando.
-            Te devuelve la transcripción de lo que entendió antes de contestar:
-            si una palabra te la transcribe mal siempre igual, eso es tu
-            pronunciación, no su oído.
+            No hace falta escribir ninguno cuando él te busca: el recordatorio
+            llega con botones y empezar es un toque. También puedes mandarle una
+            nota de voz sin comando, en cualquier momento. No te devuelve la
+            transcripción: leer tus propias palabras justo después de decirlas
+            convierte el ejercicio en un dictado. La guarda igual, así que las
+            palabras que siempre te transcribe mal siguen contando como señal de
+            pronunciación.
           </p>
         </section>
 

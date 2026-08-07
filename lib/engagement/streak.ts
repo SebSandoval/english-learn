@@ -20,6 +20,16 @@ export interface StreakState {
   totalSessions: number;
   /** True when the stored streak is stale and effectively already broken. */
   broken: boolean;
+  /**
+   * The streak length being hit right now, when it's one worth naming.
+   *
+   * Derived here rather than passed around: it used to be a parameter of
+   * `decideTone`, every caller passed `null`, and MILESTONES was dead code for
+   * months while celebration fired on a plain `current >= 7` — which made every
+   * reminder a celebration once the streak was long, instead of the day it
+   * mattered.
+   */
+  milestone: number | null;
 }
 
 export async function readStreak(user: User): Promise<StreakState> {
@@ -48,6 +58,7 @@ function derive(row: Streak | null, timeZone: string): StreakState {
       daysSince: null,
       totalSessions: row?.total_sesiones ?? 0,
       broken: false,
+      milestone: null,
     };
   }
 
@@ -55,14 +66,18 @@ function derive(row: Streak | null, timeZone: string): StreakState {
   // Practising today or yesterday keeps the streak alive; the day after that,
   // the chain is broken even though the row still says otherwise.
   const broken = daysSince > 1;
+  const current = broken ? 0 : row.streak_actual;
 
   return {
-    current: broken ? 0 : row.streak_actual,
+    current,
     best: row.streak_maximo,
     lastPractice: row.ultima_practica,
     daysSince,
     totalSessions: row.total_sesiones,
     broken,
+    // A broken streak is 0, which is in no milestone: nobody gets congratulated
+    // on a chain they already dropped.
+    milestone: MILESTONES.includes(current) ? current : null,
   };
 }
 
@@ -72,7 +87,7 @@ function derive(row: Streak | null, timeZone: string): StreakState {
  * Idempotent within a day: practising ten times on Tuesday is still one day of
  * streak. Called on every user turn, so it must stay cheap and safe to repeat.
  */
-export async function registerPractice(user: User): Promise<StreakState & { milestone: number | null }> {
+export async function registerPractice(user: User): Promise<StreakState> {
   const supabase = db();
   const today = localDate(user.zona_horaria);
 

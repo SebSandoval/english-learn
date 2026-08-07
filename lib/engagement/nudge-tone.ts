@@ -17,8 +17,8 @@ export interface ToneDecision {
  * bot teaches nobody. Every firm message therefore carries a true positive fact
  * alongside the push.
  */
-export function decideTone(streak: StreakState, milestone: number | null): ToneDecision {
-  const { daysSince } = streak;
+export function decideTone(streak: StreakState): ToneDecision {
+  const { daysSince, milestone } = streak;
 
   // Never practised. There is no gap to point at and no streak to protect, so
   // none of the pressure rungs apply — scolding someone for a habit they haven't
@@ -35,8 +35,14 @@ than a task. Three sentences maximum.`,
     };
   }
 
-  // On a live streak worth being proud of: lead with the win, not the warning.
-  if (milestone !== null || (streak.current >= 7 && daysSince <= 1)) {
+  // Standing on a milestone: lead with the win, not the warning.
+  //
+  // Only on the milestone itself. The old rule also fired on any streak of 7 or
+  // more, and since a reminder only goes out on a day they haven't practised
+  // yet, `daysSince <= 1` was true every single time — so past day 7 every
+  // reminder forever was a celebration, and the congratulation stopped meaning
+  // anything exactly when they'd invested the most in it.
+  if (milestone !== null && daysSince <= 1) {
     return {
       tone: "celebracion",
       offerQuickMode: false,

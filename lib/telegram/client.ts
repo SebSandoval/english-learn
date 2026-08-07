@@ -35,14 +35,61 @@ function splitIntoChunks(text: string, limit = 4000): string[] {
   return chunks;
 }
 
-export async function sendMessage(chatId: number, text: string): Promise<void> {
-  for (const chunk of splitIntoChunks(text)) {
+/**
+ * Buttons attached under a message.
+ *
+ * `callback_data` is capped at 64 bytes by Telegram and is echoed back to us
+ * verbatim, so it stays a short opaque token — never anything we'd trust as
+ * input. See ACTIONS in lib/telegram/actions.ts.
+ */
+export type InlineKeyboard = Array<Array<{ text: string; callback_data: string }>>;
+
+export async function sendMessage(
+  chatId: number,
+  text: string,
+  options: { keyboard?: InlineKeyboard } = {},
+): Promise<void> {
+  const chunks = splitIntoChunks(text);
+
+  for (const [i, chunk] of chunks.entries()) {
     await call("sendMessage", {
       chat_id: chatId,
       text: chunk,
       parse_mode: "HTML",
       link_preview_options: { is_disabled: true },
+      // On the last chunk only: buttons belong under the end of what they answer.
+      ...(options.keyboard && i === chunks.length - 1
+        ? { reply_markup: { inline_keyboard: options.keyboard } }
+        : {}),
     });
+  }
+}
+
+/**
+ * Acknowledges a button press.
+ *
+ * Not optional: until this call lands, Telegram leaves a spinner on the button
+ * and the user assumes it's broken. It runs before the slow work, never after.
+ */
+export async function answerCallback(callbackId: string, text?: string): Promise<void> {
+  try {
+    await call("answerCallbackQuery", { callback_query_id: callbackId, text });
+  } catch {
+    // Cosmetic, and the turn behind it matters more.
+  }
+}
+
+/**
+ * Strips the buttons off a message that has been acted on.
+ *
+ * Without it yesterday's reminder still offers a live "Two minutes" button
+ * tomorrow, and pressing it opens a session out of nowhere.
+ */
+export async function clearKeyboard(chatId: number, messageId: number): Promise<void> {
+  try {
+    await call("editMessageReplyMarkup", { chat_id: chatId, message_id: messageId });
+  } catch {
+    // Already edited, too old, or deleted. None of it is worth a failed turn.
   }
 }
 
@@ -102,7 +149,9 @@ export async function setWebhook(url: string, secret: string): Promise<void> {
   await call("setWebhook", {
     url,
     secret_token: secret,
-    allowed_updates: ["message"],
+    // callback_query is what button presses arrive as. Leave it out and the
+    // buttons render, do nothing, and spin forever.
+    allowed_updates: ["message", "callback_query"],
     drop_pending_updates: true,
   });
 }

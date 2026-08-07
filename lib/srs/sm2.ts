@@ -19,8 +19,14 @@ const EASE_MIN = 1.3;
 const EASE_MAX = 2.8;
 const EASE_DEFAULT = 2.5;
 
-/** Below this grade the answer counts as a failure and the ladder resets. */
-const PASS_GRADE = 3;
+/**
+ * Below this grade the answer counts as a failure and the ladder resets.
+ *
+ * Exported because `/progress` reports accuracy and has to call an answer right
+ * or wrong by the same rule the schedule does — otherwise the bot can tell the
+ * student they scored 70% on items it just sent back to tomorrow.
+ */
+export const PASS_GRADE = 3;
 
 /** Repetitions needed before an item is considered learned for good. */
 const MASTERY_REPETITIONS = 6;

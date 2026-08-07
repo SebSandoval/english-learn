@@ -140,6 +140,42 @@ the darker one. The hero thread animates once on load and the correction block
 is deliberately detached from the reply above it; that gap is the product's
 thesis, not decoration.
 
+## Measuring progress, and reminders you can answer with a thumb
+
+Three things landed together on 2026-08-07, all off data already being stored:
+
+- **`/progress`** finally reads `revisiones`, which had been written since phase
+  4 and never queried. The headline is review accuracy over the last 30 graded
+  answers against the 30 before them, because that moves within a week — mastery
+  is six spaced successes, i.e. months, so it reads zero for a long time while
+  the student is genuinely improving. Right/wrong uses `PASS_GRADE` exported
+  from `lib/srs/sm2.ts`: two definitions of "correct" in one product is how you
+  end up telling someone they scored 70% on items you just reset to tomorrow.
+  Below `MIN_SAMPLE` answers it refuses to show a percentage rather than print a
+  number it can't stand behind. "Days to master" is inferred from the item's last
+  review because nothing records when `estado` flipped to `dominado`; a column
+  for one line of one command isn't worth a migration.
+- **Streak milestones actually fire.** `MILESTONES` was computed and thrown away:
+  every caller passed `null` for `decideTone`'s milestone parameter, and
+  celebration fell back to a bare `current >= 7`. A reminder only goes out on a
+  day with no practice yet, so that was true *every* time — past day 7 every
+  reminder forever was a celebration, and it stopped meaning anything exactly
+  when the student had invested most. `milestone` now lives on `StreakState`,
+  derived in `readStreak`, and the parameter is gone so it can't drift again.
+- **Reminders carry inline buttons** (`lib/telegram/actions.ts`). The tap has to
+  survive the walk to the keyboard: notification open, nothing typed yet, is
+  precisely where sessions are lost. "Two minutes" sits *beside* the yes, not
+  under it — it's an easier yes than "no". `callback_data` is one of three fixed
+  tokens validated by `isAction`, never an id or a mode: Telegram echoes back
+  whatever anyone crafts, so treating it as data would be trusting the wire.
+  `startFromNudge` continues the session the reminder already opened instead of
+  calling `/practice`, which would close it, re-score the modes, and lose both
+  the review queue and the link back to the `nudges` row.
+
+**`allowed_updates` must include `callback_query`** in both `lib/telegram/client.ts`
+and `scripts/set-webhook.mjs`, and the webhook has to be re-registered after
+deploying — otherwise the buttons render, do nothing, and spin forever.
+
 ## Deferred, agreed, not yet done
 
 **Rename the database to English.** Table and column names are still Spanish

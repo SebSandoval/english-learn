@@ -89,7 +89,7 @@ async function preview(user: User): Promise<NudgeOutcome> {
   }
 
   const choice = await chooseMode(user);
-  const decision = decideTone(streak, null);
+  const decision = decideTone(streak);
 
   return {
     sent: true,

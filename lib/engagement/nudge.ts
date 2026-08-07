@@ -10,6 +10,7 @@ import { callLlm } from "@/lib/llm/chat";
 import { buildNudgePrompt } from "@/lib/llm/prompts/nudge";
 import { chooseMode } from "@/lib/modes/selector";
 import { buildQueue } from "@/lib/srs/queue";
+import { nudgeKeyboard } from "@/lib/telegram/actions";
 import { sendMessage } from "@/lib/telegram/client";
 
 export type SkipReason =
@@ -56,7 +57,7 @@ export async function nudgeUser(user: User, now = new Date()): Promise<NudgeOutc
     latestSummary(user.id),
   ]);
 
-  const decision = decideTone(streak, null);
+  const decision = decideTone(streak);
 
   // Review needs a queue. If nothing is actually due by the time we get here,
   // fall back to conversation rather than opening an empty review session.
@@ -78,7 +79,11 @@ export async function nudgeUser(user: User, now = new Date()): Promise<NudgeOutc
     ...(review.length ? { review: { items: review, index: 0, ungraded: 0 } } : {}),
   });
 
-  await sendMessage(user.telegram_chat_id, message);
+  // The buttons matter more than the copy: this is the moment the session is
+  // won or lost, and one tap beats typing a command.
+  await sendMessage(user.telegram_chat_id, message, {
+    keyboard: nudgeKeyboard(mode, decision.offerQuickMode),
+  });
 
   await db().from("nudges").insert({
     usuario_id: user.id,

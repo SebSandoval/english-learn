@@ -2,14 +2,15 @@ import "server-only";
 
 import { voiceCapabilities } from "@/lib/audio";
 import { db } from "@/lib/db/client";
-import { closeOpenSessions, startSession } from "@/lib/db/queries";
+import { closeOpenSessions, openSession, startSession } from "@/lib/db/queries";
 import type { Level, PracticeMode, Session, User } from "@/lib/db/types";
-import { masteredCount, readStreak } from "@/lib/engagement/streak";
+import { buildProgress } from "@/lib/engagement/progress";
+import { markNudgeAnswered, masteredCount, readStreak } from "@/lib/engagement/streak";
 import type { TutorReply } from "@/lib/llm/schemas";
 import { openingTurn } from "@/lib/modes";
 import { chooseMode } from "@/lib/modes/selector";
 import { DRILL_OPENING, LISTENING_OPENING } from "@/lib/modes/voice";
-import { openingInstruction, startReview } from "@/lib/modes/spaced-review";
+import { openingInstruction, readContext, startReview } from "@/lib/modes/spaced-review";
 import { esc } from "@/lib/telegram/client";
 
 const LEVELS: Record<string, Level> = {
@@ -86,6 +87,9 @@ export async function handleCommand(user: User, input: string): Promise<CommandR
 
     case "streak":
       return text(await showStreak(user));
+
+    case "progress":
+      return text(await showProgress(user));
 
     case "practice":
       return startPractice(user, false);
@@ -269,6 +273,77 @@ async function showStreak(user: User): Promise<string> {
   return lines.join("\n");
 }
 
+/**
+ * `/progress` — the answer to "am I getting better?", which `/streak` cannot
+ * give: showing up and improving are different things.
+ *
+ * Every number here is stated with its sample size. "73%" on its own invites
+ * belief it hasn't earned, and the whole point of the command is that the
+ * student can trust it.
+ */
+async function showProgress(user: User): Promise<string> {
+  const p = await buildProgress(user);
+
+  if (!p.recent) {
+    return p.totalReviews > 0
+      ? `Only ${p.totalReviews} graded answer${p.totalReviews === 1 ? "" : "s"} so far — ` +
+          "not enough to tell you anything honest yet. Do a few rounds of /review and ask me again."
+      : "No reviews graded yet, so there's nothing to measure. Talk to me for a while, " +
+          "then /review turns what you get wrong into the deck this tracks.";
+  }
+
+  const lines = [
+    "📈 <b>Progress</b>",
+    "",
+    `Last ${p.recent.total} reviews: <b>${p.recent.right} right (${p.recent.percent}%)</b>`,
+  ];
+
+  if (p.previous) {
+    const delta = p.recent.percent - p.previous.percent;
+    const verdict =
+      Math.abs(delta) < 5
+        ? "about the same — steady"
+        : delta > 0
+          ? `up ${delta} points`
+          : `down ${Math.abs(delta)} points`;
+
+    lines.push(
+      `The ${p.previous.total} before that: ${p.previous.right} right (${p.previous.percent}%)`,
+      `<i>${verdict}</i>`,
+    );
+  } else {
+    lines.push("<i>Not enough history yet to compare against.</i>");
+  }
+
+  const { mistakes, vocab, avgDaysToMaster } = p.mastered;
+  if (mistakes || vocab) {
+    const parts = [
+      mistakes ? `${mistakes} mistake${mistakes === 1 ? "" : "s"}` : null,
+      vocab ? `${vocab} word${vocab === 1 ? "" : "s"}` : null,
+    ].filter(Boolean);
+
+    lines.push("", `✓ <b>Retired for good:</b> ${parts.join(", ")}`);
+    if (avgDaysToMaster !== null) {
+      lines.push(`   Took about ${avgDaysToMaster} days each.`);
+    }
+  }
+
+  if (p.stubborn.length) {
+    lines.push("", "<b>Still fighting you</b>");
+    for (const s of p.stubborn) {
+      const bar = "●".repeat(s.mastery) + "○".repeat(5 - s.mastery);
+      lines.push(`${bar}  ${esc(s.pattern)} ×${s.frequency}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+const QUICK_INSTRUCTION =
+  "Open a two-minute session. One single question they can answer in one short " +
+  "message. Say up front that this is the quick version and that it counts. " +
+  "Two sentences, no more.";
+
 /** `/practice` picks the mode for you; `/quick` forces the two-minute version. */
 async function startPractice(user: User, quick: boolean): Promise<CommandResult> {
   const choice = await chooseMode(user);
@@ -281,11 +356,32 @@ async function startPractice(user: User, quick: boolean): Promise<CommandResult>
 
   const session = await startSession(user.id, choice.mode, { quick_mode: quick });
 
-  const instruction = quick
-    ? "Open a two-minute session. One single question they can answer in one short " +
-      "message. Say up front that this is the quick version and that it counts. " +
-      "Two sentences, no more."
-    : openingFor(choice.mode);
+  return turn(session, await openingTurn(user, session, quick ? QUICK_INSTRUCTION : openingFor(choice.mode)));
+}
+
+/**
+ * The button on a reminder, taken.
+ *
+ * The reminder already opened a session in the mode it proposed, with the
+ * review queue built when that was the mode — so we continue in it instead of
+ * starting over. Calling `/practice` here would close that session, re-score
+ * the modes, and lose both the queue and the link back to the `nudges` row that
+ * tells us which tones actually get answered.
+ */
+export async function startFromNudge(user: User, quick: boolean): Promise<CommandResult> {
+  const session = await openSession(user.id);
+  if (!session) return startPractice(user, quick);
+
+  await markNudgeAnswered(session.id).catch(() => {});
+
+  // A review queue outranks the quick version: the exercises are already
+  // chosen, and there is no shorter way to do five of them than to do them.
+  const review = readContext(session);
+  const instruction = review
+    ? openingInstruction(review)
+    : quick
+      ? QUICK_INSTRUCTION
+      : openingFor(session.modo);
 
   return turn(session, await openingTurn(user, session, instruction));
 }

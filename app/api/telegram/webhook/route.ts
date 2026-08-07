@@ -6,9 +6,16 @@ import type { Session, User } from "@/lib/db/types";
 import { env } from "@/lib/env";
 import { LlmUnavailableError } from "@/lib/llm/chat";
 import { processTurn } from "@/lib/modes";
+import { ACTIONS, SNOOZE_REPLY, isAction } from "@/lib/telegram/actions";
 import { LIMIT_REACHED, authorize, withinDailyLimit } from "@/lib/telegram/access";
-import { downloadFile, sendChatAction, sendMessage } from "@/lib/telegram/client";
-import { handleCommand } from "@/lib/telegram/commands";
+import {
+  answerCallback,
+  clearKeyboard,
+  downloadFile,
+  sendChatAction,
+  sendMessage,
+} from "@/lib/telegram/client";
+import { handleCommand, startFromNudge } from "@/lib/telegram/commands";
 import { deliver } from "@/lib/telegram/deliver";
 
 export const dynamic = "force-dynamic";
@@ -39,9 +46,17 @@ interface TelegramUpdate {
     voice?: { file_id: string; duration: number };
     audio?: { file_id: string; duration?: number };
   };
+  /** A button press on a reminder. Requires callback_query in allowed_updates. */
+  callback_query?: {
+    id: string;
+    from?: { first_name?: string; is_bot?: boolean };
+    message?: { message_id: number; chat: { id: number } };
+    data?: string;
+  };
 }
 
 type TelegramMessage = NonNullable<TelegramUpdate["message"]>;
+type TelegramCallback = NonNullable<TelegramUpdate["callback_query"]>;
 
 /**
  * Telegram webhook.
@@ -59,12 +74,24 @@ export async function POST(req: Request) {
   }
 
   const update = (await req.json().catch(() => null)) as TelegramUpdate | null;
-  const message = update?.message;
+  const deadline = Date.now() + REQUEST_BUDGET_MS;
 
+  const callback = update?.callback_query;
+  if (callback?.message && !callback.from?.is_bot) {
+    const chatId = callback.message.chat.id;
+    try {
+      await handleCallback(chatId, callback);
+    } catch (e) {
+      console.error("[webhook:callback]", e);
+      await sendMessage(chatId, apology(e)).catch(() => {});
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  const message = update?.message;
   if (!message || message.from?.is_bot) return NextResponse.json({ ok: true });
 
   const chatId = message.chat.id;
-  const deadline = Date.now() + REQUEST_BUDGET_MS;
 
   try {
     await handleUpdate(chatId, message, deadline);
@@ -74,6 +101,45 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json({ ok: true });
+}
+
+/**
+ * A button on a reminder was pressed.
+ *
+ * Order matters: acknowledge first so the spinner stops, strip the buttons so
+ * yesterday's reminder can't open a session tomorrow, and only then do the slow
+ * work. The acknowledgement is never held behind an LLM call.
+ */
+async function handleCallback(chatId: number, callback: TelegramCallback) {
+  await answerCallback(callback.id);
+  await clearKeyboard(chatId, callback.message!.message_id);
+
+  if (!isAction(callback.data)) return;
+
+  // Same gate as a written message: a callback is just as forgeable, and the
+  // work behind it costs just as much.
+  const gate = await authorize(chatId, undefined, callback.from?.first_name);
+  if (!gate.user) {
+    if (gate.reply) await sendMessage(chatId, gate.reply);
+    return;
+  }
+
+  if (callback.data === ACTIONS.snooze) {
+    await sendMessage(chatId, SNOOZE_REPLY);
+    return;
+  }
+
+  if (!(await withinDailyLimit(gate.user))) {
+    await sendMessage(chatId, LIMIT_REACHED);
+    return;
+  }
+
+  await sendChatAction(chatId, "typing");
+
+  const result = await startFromNudge(gate.user, callback.data === ACTIONS.quick);
+
+  if (result.kind === "text") await sendMessage(chatId, result.text);
+  else await deliver(chatId, result.mode, result.reply);
 }
 
 /**

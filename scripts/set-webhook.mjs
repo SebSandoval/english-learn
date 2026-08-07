@@ -69,7 +69,8 @@ const url = `${arg.replace(/\/$/, "")}/api/telegram/webhook`;
 const res = await api("setWebhook", {
   url,
   secret_token: secret,
-  allowed_updates: ["message"],
+  // callback_query carries the inline button presses on the nudges.
+  allowed_updates: ["message", "callback_query"],
   drop_pending_updates: true,
 });
 
