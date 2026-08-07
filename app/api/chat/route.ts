@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { denyUnauthorized } from "@/lib/admin-auth";
 import { activeSession, getOrCreateUser, openSession, startSession } from "@/lib/db/queries";
 import type { PracticeMode, Session, User } from "@/lib/db/types";
 import { openingTurn, processTurn } from "@/lib/modes";
@@ -31,6 +32,9 @@ const bodySchema = z.object({
  * conversation can be exercised without Telegram, and for a future web frontend.
  */
 export async function POST(req: Request) {
+  const denied = denyUnauthorized(req);
+  if (denied) return denied;
+
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json(

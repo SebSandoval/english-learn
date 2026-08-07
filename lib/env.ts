@@ -51,6 +51,28 @@ const schema = z.object({
   // Phase 3 — cron
   CRON_SECRET: z.string().min(1).optional(),
 
+  /**
+   * Access control. See lib/telegram/access.ts.
+   *
+   * Comma-separated chat ids that own the bot. EMPTY MEANS OPEN: the gate stays
+   * off until this is set, so deploying it can't lock the owner out of their own
+   * bot before they've configured anything.
+   */
+  TELEGRAM_OWNER_CHAT_IDS: z.string().default(""),
+  /** Unset means no new signups at all. Rotating it revokes every pending invite. */
+  INVITE_CODE: z.string().min(1).optional(),
+  /**
+   * Guards the diagnostic endpoints (/api/chat, /api/voice). Falls back to
+   * CRON_SECRET, which is already configured everywhere, so protection doesn't
+   * wait on a manual step.
+   */
+  ADMIN_SECRET: z.string().min(1).optional(),
+  /**
+   * Turns one user may spend in 24h. Every turn costs an LLM call and possibly
+   * synthesis, so this is the ceiling on what a single account can burn.
+   */
+  DAILY_TURN_LIMIT: z.coerce.number().int().positive().default(80),
+
   // Phase 5 — voice
   GROQ_API_KEY: z.string().min(1).optional(),
   // TTS: Deepgram wins when both are set. See ttsProvider() in lib/audio.

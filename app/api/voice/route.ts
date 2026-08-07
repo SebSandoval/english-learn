@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { denyUnauthorized } from "@/lib/admin-auth";
 import { sttProvider, ttsProvider, voiceCapabilities } from "@/lib/audio";
 import { speakable } from "@/lib/audio/speakable";
 
@@ -34,7 +35,14 @@ export async function GET() {
   });
 }
 
+/**
+ * Only POST is guarded. GET reports which providers are configured, which
+ * `/api/health` already publishes by design, and it spends nothing.
+ */
 export async function POST(req: Request) {
+  const denied = denyUnauthorized(req);
+  if (denied) return denied;
+
   const contentType = req.headers.get("content-type") ?? "";
 
   try {

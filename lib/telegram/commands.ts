@@ -57,6 +57,12 @@ export async function handleCommand(user: User, input: string): Promise<CommandR
     case "start":
       return text(welcome(user));
 
+    // Reaching here means the code was already accepted upstream and the user
+    // exists — otherwise the gate answered and this never ran. Welcoming them
+    // beats "I don't know that one" on their very first message.
+    case "invite":
+      return text(welcome(user));
+
     case "chat":
       return startConversation(user);
 

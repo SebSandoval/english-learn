@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { sttProvider } from "@/lib/audio";
-import { activeSession, getOrCreateUser } from "@/lib/db/queries";
+import { activeSession } from "@/lib/db/queries";
 import type { Session, User } from "@/lib/db/types";
 import { env } from "@/lib/env";
 import { LlmUnavailableError } from "@/lib/llm/chat";
 import { processTurn } from "@/lib/modes";
+import { LIMIT_REACHED, authorize, withinDailyLimit } from "@/lib/telegram/access";
 import { downloadFile, sendChatAction, sendMessage } from "@/lib/telegram/client";
 import { handleCommand } from "@/lib/telegram/commands";
 import { deliver } from "@/lib/telegram/deliver";
@@ -91,7 +92,20 @@ function apology(e: unknown): string {
 }
 
 async function handleUpdate(chatId: number, message: TelegramMessage, deadline: number) {
-  const user = await getOrCreateUser(chatId, message.from?.first_name);
+  // Before anything that costs: an unknown chat gets one SELECT and a canned
+  // line, never a model call.
+  const gate = await authorize(chatId, message.text, message.from?.first_name);
+  if (!gate.user) {
+    if (gate.reply) await sendMessage(chatId, gate.reply);
+    return;
+  }
+
+  const user = gate.user;
+
+  if (!(await withinDailyLimit(user))) {
+    await sendMessage(chatId, LIMIT_REACHED);
+    return;
+  }
 
   const audio = message.voice ?? message.audio;
   if (audio) {

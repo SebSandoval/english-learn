@@ -220,6 +220,36 @@ both dropped for returning invalid JSON.
   grading usually falls back to our own queue index. Logs warn on mismatch. If
   review starts asking odd things, look there first.
 
+## Who can spend the quota
+
+Every turn is an LLM call and possibly a synthesis, so access control here is
+cost control, not privacy. Three layers, all in place since 2026-08-07:
+
+- **The bot's handle is public.** The webhook secret only proves the caller is
+  Telegram; it says nothing about who is writing. `lib/telegram/access.ts` gates
+  on the chat id: **a row in `usuarios` IS the permission**, which is why this
+  needed no migration. Unknown chats get one SELECT and a canned line, never a
+  model call. New rows are created only for `TELEGRAM_OWNER_CHAT_IDS` or for a
+  correct `/invite CODE` against `INVITE_CODE`. Wrong code and no code get the
+  same answer on purpose — telling them apart makes the bot an oracle for
+  guessing it. **An empty `TELEGRAM_OWNER_CHAT_IDS` leaves the gate open**, so
+  deploying this can't lock the owner out before they configure it; the warning
+  in the logs is the only sign.
+- **`DAILY_TURN_LIMIT`** (default 80) caps one user over a rolling 24 hours, not
+  a calendar day: the calendar version needs a timezone and hands out a fresh
+  budget at local midnight, and cost doesn't reset at midnight. Owners are
+  exempt, and the check fails open — miscounting must not silence the bot.
+- **`/api/chat` and `/api/voice` are diagnostic tools, not product**, and are
+  closed with `ADMIN_SECRET` (falling back to `CRON_SECRET`, already configured
+  everywhere). Open, `/api/voice` is free synthesis on the Deepgram credit at
+  ~$0.13 a request, and `/api/chat` writes a `usuarios` row for any chat id it
+  is handed — which the nudge cron then pays an LLM call to write a message for,
+  every half hour, forever. Append `?secret=` to existing curls.
+
+CORS is not part of this and never will be: it is a rule browsers apply to other
+browsers, and the threat here is `curl`. Don't add CORS headers expecting them to
+protect anything.
+
 ## Env and secrets
 
 `CRON_SECRET` in `.env.local` is **local dev only** and intentionally differs
