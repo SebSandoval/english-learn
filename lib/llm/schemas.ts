@@ -54,31 +54,25 @@ const VOCAB_TYPES = ["palabra", "expresion", "phrasal_verb", "collocation"] as c
 
 /**
  * Free models don't guarantee clean JSON: they wrap it in ```json, prepend
- * prose, or put a plausible-but-invalid value in one enum field.
+ * prose, think out loud before answering, or get cut off mid-object when the
+ * token budget runs out.
  *
- * Degradation here is per-item, never all-or-nothing. A single bad correction
- * must not cost us the reply — an earlier version validated the whole object at
- * once and dumped raw JSON into the chat when any field was off.
+ * Returns null when nothing usable came back, and the caller moves to the next
+ * model. It used to return the raw text as the reply instead, on the theory
+ * that whatever the model said was better than nothing. It is not: on
+ * 2026-08-18 that shipped a reasoning model's chain of thought
+ * ("We need to respond in English only... Let's analyze.") and a truncated JSON
+ * object straight into the chat, as the tutor's own words.
+ *
+ * Degradation inside a valid object stays per-item, though. A single bad
+ * correction must not cost us the reply — an earlier version validated the
+ * whole object at once and dumped raw JSON into the chat when any field was off.
  */
-export function parseTutorReply(raw: string): TutorReply {
-  const cleaned = raw
-    .replace(/^\s*```(?:json)?\s*/i, "")
-    .replace(/\s*```\s*$/, "")
-    .trim();
+export function parseTutorReply(raw: string): TutorReply | null {
+  const obj = extractJsonObject(stripWrapping(raw));
 
-  const obj = extractJsonObject(cleaned);
-
-  // No object, or no usable reply: treat the text itself as what the tutor said.
-  if (!obj || typeof obj.reply !== "string" || !obj.reply.trim()) {
-    return {
-      reply: cleaned || raw,
-      corrections: [],
-      new_vocab: [],
-      review_quality: null,
-      review_item_id: null,
-      end_session: false,
-    };
-  }
+  // No object, or no usable reply: this attempt produced nothing to send.
+  if (!obj || typeof obj.reply !== "string" || !obj.reply.trim()) return null;
 
   return {
     reply: obj.reply.trim(),
@@ -90,17 +84,79 @@ export function parseTutorReply(raw: string): TutorReply {
   };
 }
 
+/** Markdown fences and the <think> block some reasoning models emit inline. */
+function stripWrapping(raw: string): string {
+  return raw
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/^\s*```(?:json)?\s*/i, "")
+    .replace(/\s*```\s*$/, "")
+    .trim();
+}
+
 function extractJsonObject(text: string): Record<string, unknown> | null {
   const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end <= start) return null;
+  if (start === -1) return null;
+
+  const slice = outermostObject(text.slice(start));
+  if (!slice) return null;
 
   try {
-    const parsed: unknown = JSON.parse(text.slice(start, end + 1));
+    const parsed: unknown = JSON.parse(slice);
     return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Cuts `text` — which starts at an opening brace — down to one JSON object.
+ *
+ * Two things it repairs, both seen in production:
+ *   · prose after the object: stop at the brace that closes it
+ *   · a reply truncated by max_tokens mid-object: reopen at the last field that
+ *     ended cleanly and close what is still open
+ *
+ * Truncation inside "reply" itself is deliberately NOT repaired: closing the
+ * string there would send half a sentence as if the tutor meant to stop. Since
+ * "reply" is the first key in the contract, the repair finds no complete field,
+ * returns nothing, and the turn is retried on another model.
+ */
+function outermostObject(text: string): string | null {
+  const open: string[] = [];
+  let inString = false;
+  let escaped = false;
+  /** End of the last field that closed cleanly, and the nesting around it. */
+  let safeEnd = -1;
+  let safeOpen = "";
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{" || ch === "[") {
+      open.push(ch === "{" ? "}" : "]");
+    } else if (ch === "}" || ch === "]") {
+      open.pop();
+      if (!open.length) return text.slice(0, i + 1);
+      safeEnd = i + 1;
+      safeOpen = open.join("");
+    } else if (ch === ",") {
+      safeEnd = i;
+      safeOpen = open.join("");
+    }
+  }
+
+  if (safeEnd < 0) return null;
+
+  return text.slice(0, safeEnd) + [...safeOpen].reverse().join("");
 }
 
 /** Validates array items one by one, keeping the good ones and dropping the rest. */

@@ -26,17 +26,25 @@ const schema = z.object({
    * quota is counted separately, and its key was already configured for
    * transcription.
    *
-   * Order inside Groq is measured against the real LISTENING prompt — the
-   * longest generation the bot ever asks for: llama-3.3-70b 1350ms,
-   * gpt-oss-120b 1733ms, both valid JSON. qwen3.6-27b is absent because it
-   * failed JSON validation outright. Re-run `npm run bench` when replies
-   * degrade, and reorder here.
+   * `groq:llama-3.3-70b-versatile` led this list until 2026-08-18, when Groq
+   * retired it: every turn got a 404 `model_not_found`, fell through to the
+   * next entry, and the bot kept working — badly, on a reasoning model, with
+   * nothing in the chat to say what had changed. A chain hides a dead head by
+   * design. When replies suddenly change character, check that every entry
+   * still exists (`GET https://api.groq.com/openai/v1/models`) before
+   * suspecting the prompt.
+   *
+   * Both Groq entries are gpt-oss because that is what is left there that
+   * writes valid JSON — qwen3.6-27b failed that outright. 20b is second rather
+   * than redundant: the free tier limits tokens per MINUTE per model (8k on
+   * 120b, and one tutor turn is ~3k), so a burst that 429s on the big model
+   * still gets an answer from the small one.
    */
   LLM_CHAIN: z
     .string()
     .default(
-      "groq:llama-3.3-70b-versatile," +
-        "groq:openai/gpt-oss-120b," +
+      "groq:openai/gpt-oss-120b," +
+        "groq:openai/gpt-oss-20b," +
         "openrouter:openrouter/free," +
         "openrouter:nvidia/nemotron-3-super-120b-a12b:free",
     ),

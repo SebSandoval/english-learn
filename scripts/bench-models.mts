@@ -5,7 +5,11 @@
  * Short synthetic prompts are misleading — they made gpt-oss-20b look fine at
  * 2s when it actually fails on the full prompt. Always benchmark with the real
  * thing. Free-tier quality drifts, so re-run this whenever replies degrade and
- * reorder OPENROUTER_MODEL / OPENROUTER_MODEL_FALLBACK accordingly.
+ * reorder LLM_CHAIN accordingly.
+ *
+ * It only covers the OpenRouter half of the chain. Before blaming quality,
+ * check that every model in LLM_CHAIN still exists — see AGENTS.md, "A dead
+ * entry in the chain is invisible".
  *
  *   npx tsx scripts/bench-models.mts
  */

@@ -103,6 +103,40 @@ the RESOLVED chain, with entries whose provider key is missing already dropped.
 Note that running `npm run bench` and any diagnostic scripts spend from the same
 daily quota as the bot.
 
+**A dead entry in the chain is invisible — 2026-08-18.** Groq retired
+`llama-3.3-70b-versatile`, which led `LLM_CHAIN`. Every turn 404'd on it, fell
+through to `groq:openai/gpt-oss-120b`, and the bot kept answering: the failover
+worked exactly as designed and hid the fact that the model we chose for quality
+was gone. What surfaced instead was two garbled replies, which reads like a
+prompt problem and is not one. `/api/health` cannot see this either — it prints
+the resolved chain, and every entry in it looks fine until it is called.
+
+So when replies change character, verify the models still exist before touching
+the prompt. It costs nothing, neither call is an inference:
+
+```bash
+curl -s -H "Authorization: Bearer $GROQ_API_KEY" https://api.groq.com/openai/v1/models | jq -r '.data[].id'
+curl -s -H "Authorization: Bearer $OPENROUTER_API_KEY" https://openrouter.ai/api/v1/models | jq -r '.data[].id' | grep free
+```
+
+What is left on Groq that writes valid JSON is gpt-oss, so both Groq entries are
+now gpt-oss 120b then 20b. That is not redundancy: the free tier limits tokens
+per **minute** per model (8k on 120b, and one tutor turn is around 3k), so two
+quick turns can 429 on the big model and still get answered by the small one.
+
+**Reasoning models must be told to keep it short and to themselves.** gpt-oss
+thinks before it answers, and that thinking is billed from the same `max_tokens`
+as the reply. Untouched, on the real tutor prompt, an ordinary conversation turn
+spent all 900 tokens and came back `finish_reason: "length"`, cut off inside
+`new_vocab`. `reasoningParams()` in `lib/llm/chat.ts` sends
+`reasoning_format: "hidden"` and `reasoning_effort: "low"` — measured 590 tokens
+and complete, with a *better* reply, since none of the budget went on
+deliberating about a chat message. They go only to models that accept them:
+Groq 400s on a parameter a model does not support, and other families take
+different values (qwen3 wants `none|default`). The tutor's own ceiling is
+`TUTOR_MAX_TOKENS` in `lib/modes/index.ts`; unused tokens cost nothing, a
+truncated reply costs the turn.
+
 ## Phase 6 — provider chains with failover (partly done)
 
 **Done for the LLM** (see above). Still open for voice:
@@ -204,7 +238,7 @@ queries. Regenerate types after migrating.
 ```bash
 npx tsc --noEmit      # capture the exit code — do NOT pipe through head
 npx eslint app lib scripts
-npm test              # SM-2 scheduler + speakable(), 17 tests
+npm test              # SM-2, speakable(), tutor JSON parsing, 47 tests
 npm run build
 ```
 
@@ -231,6 +265,19 @@ both dropped for returning invalid JSON.
   for the same thing, this is the guard for when it doesn't comply. Don't "fix"
   it by feeding the notes back into the history: that spends context on text the
   student has already read, every turn, forever.
+- **Unparseable output is a failed attempt, not a reply.** `parseTutorReply()`
+  returns `null` when it can't recover an object with a reply in it, and
+  `callLlmJson()` treats that like a 503: it moves to the next model and logs a
+  preview of what it rejected. It used to fall back to sending the raw text,
+  reasoning that anything the model said beat nothing — on 2026-08-18 that put a
+  model's chain of thought ("We need to respond in English only... Let's
+  analyze.") into the chat as the tutor's own words, twice. What it recovers
+  first: markdown fences, a `<think>` block, prose after the object, and an
+  object truncated by the token limit — cut back to the last complete field and
+  closed, so the reply and the finished corrections survive. Truncation inside
+  `reply` itself is deliberately not repaired; half a sentence sent as if it
+  were finished is worse than a retry. `reply` is the first key in the contract,
+  which is what makes that distinction cheap.
 - **`corrections[].pattern` is a deduplication key.** It must describe the rule
   ("past simple: uses base form instead of past tense"), never quote the
   student. The prompt carries good/bad examples; check them if the mistakes

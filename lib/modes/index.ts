@@ -15,7 +15,7 @@ import {
 } from "@/lib/db/queries";
 import type { Session, User } from "@/lib/db/types";
 import { markNudgeAnswered, registerPractice } from "@/lib/engagement/streak";
-import { callLlm, type LlmMessage } from "@/lib/llm/chat";
+import { callLlm, callLlmJson, type LlmMessage } from "@/lib/llm/chat";
 import { freshCorrections } from "@/lib/llm/corrections";
 import { buildTutorPrompt } from "@/lib/llm/prompts/tutor";
 import { parseTutorReply, type TutorReply } from "@/lib/llm/schemas";
@@ -46,6 +46,17 @@ export interface TurnInput {
 
 /** Below this, compressing the history is not worth delaying the reply for. */
 const SUMMARY_BUDGET_MS = 9_000;
+
+/**
+ * Room for the longest turn the tutor ever writes — a LISTENING passage plus
+ * three corrections and three vocabulary items — and for the thinking a
+ * reasoning model spends from the same budget before it starts writing.
+ *
+ * The default of 900 was not enough: on 2026-08-18 an ordinary conversation
+ * turn came back at finish_reason "length", cut off inside "new_vocab". Unused
+ * tokens cost nothing, a truncated reply costs the turn.
+ */
+const TUTOR_MAX_TOKENS = 1_400;
 
 /**
  * One full conversation turn, shared by every mode.
@@ -91,12 +102,11 @@ export async function processTurn(input: TurnInput): Promise<TutorReply> {
     })),
   ];
 
-  const raw = await callLlm(messages, {
-    json: true,
+  const reply = await callLlmJson(messages, parseTutorReply, {
     temperature: 0.85,
+    maxTokens: TUTOR_MAX_TOKENS,
     deadline: input.deadline,
   });
-  const reply = parseTutorReply(raw);
 
   // The history the model sees carries no record of what it already corrected,
   // so it re-corrects older turns. Anything not quoting THIS message goes.
@@ -237,15 +247,14 @@ export async function openingTurn(
     context: serializeModeContext(session),
   });
 
-  const raw = await callLlm(
+  const reply = await callLlmJson(
     [
       { role: "system", content: system },
       { role: "user", content: instruction },
     ],
-    { json: true, temperature: 0.9 },
+    parseTutorReply,
+    { temperature: 0.9, maxTokens: TUTOR_MAX_TOKENS },
   );
-
-  const reply = parseTutorReply(raw);
 
   // Nobody has said anything yet: any correction here is about a message that
   // does not exist.

@@ -72,6 +72,30 @@ interface ChainEntry {
   model: string;
 }
 
+/**
+ * Groq's gpt-oss models reason before answering, and that costs twice: the
+ * chain of thought comes back in its own field, and it is spent from the same
+ * max_tokens as the answer.
+ *
+ * Both bit us on 2026-08-18, on the same day and for the same reason — the
+ * chain's first entry had been retired upstream, so every turn landed here.
+ * The thinking leaked into the chat when no JSON followed it, and a plain
+ * conversation turn hit finish_reason "length" mid-object at 900 tokens.
+ * Measured on the real tutor prompt: 900 tokens and truncated at the default
+ * effort, 590 tokens and complete at "low" — with a better reply, since none of
+ * the budget went on deliberating about a chat message.
+ *
+ * Sent only to the models that accept them: Groq 400s on a parameter a model
+ * does not support, and other reasoning families take different values
+ * (qwen3 wants none|default, not low|medium|high).
+ */
+const GROQ_REASONING_MODELS = /gpt-oss/i;
+
+function reasoningParams(entry: ChainEntry): Record<string, unknown> {
+  if (entry.provider !== "groq" || !GROQ_REASONING_MODELS.test(entry.model)) return {};
+  return { reasoning_format: "hidden", reasoning_effort: "low" };
+}
+
 /** Total budget for a turn. Must stay under the route's maxDuration of 60s. */
 const TOTAL_BUDGET_MS = 50_000;
 /** Cap for any single attempt, so one hung model can't eat the whole budget. */
@@ -87,10 +111,32 @@ const ROUNDS = 2;
  * plain timeouts. The whole point of this function is that none of those reach
  * the student.
  */
-export async function callLlm(
+export async function callLlm(messages: LlmMessage[], options: LlmOptions = {}): Promise<string> {
+  return walk(messages, options, (content) => content);
+}
+
+/**
+ * Like callLlm, but the answer has to survive `parse` to count as an answer.
+ *
+ * A model that thinks out loud instead of replying, or gets cut off halfway
+ * through the object, has failed its attempt exactly as much as one that
+ * returned 503 — so it costs the chain a step, not the student a turn. Before
+ * this, unparseable output was handed to the caller as prose and went out as
+ * the tutor's own words.
+ */
+export async function callLlmJson<T>(
   messages: LlmMessage[],
+  parse: (content: string) => T | null,
   options: LlmOptions = {},
-): Promise<string> {
+): Promise<T> {
+  return walk(messages, { ...options, json: true }, parse);
+}
+
+async function walk<T>(
+  messages: LlmMessage[],
+  options: LlmOptions,
+  parse: (content: string) => T | null,
+): Promise<T> {
   const chain = modelChain();
   const deadline = options.deadline ?? Date.now() + TOTAL_BUDGET_MS;
 
@@ -106,7 +152,17 @@ export async function callLlm(
       }
 
       try {
-        return await request(entry, messages, options, Math.min(remaining, ATTEMPT_CAP_MS));
+        const content = await request(
+          entry,
+          messages,
+          options,
+          Math.min(remaining, ATTEMPT_CAP_MS),
+        );
+
+        const parsed = parse(content);
+        if (parsed === null) throw new Error(`unusable response: ${preview(content)}`);
+
+        return parsed;
       } catch (e) {
         lastError = e instanceof Error ? e : new Error(String(e));
         console.warn(
@@ -117,6 +173,11 @@ export async function callLlm(
   }
 
   throw new LlmUnavailableError(`All models failed. Last error: ${lastError?.message}`);
+}
+
+/** Enough of a rejected response to tell prose, thinking and truncation apart in the logs. */
+function preview(content: string): string {
+  return JSON.stringify(content.replace(/\s+/g, " ").slice(0, 140));
 }
 
 /**
@@ -198,8 +259,9 @@ async function request(
         temperature: options.temperature ?? 0.8,
         max_tokens: options.maxTokens ?? 900,
         ...(config.excludeReasoning ? { reasoning: { exclude: true } } : {}),
-        // Free models don't always honour response_format; the defensive
-        // parsing in parseTutorReply() is the real safety net.
+        ...reasoningParams(entry),
+        // Free models don't always honour response_format; parseTutorReply()
+        // and the rejection above it are the real safety net.
         ...(options.json ? { response_format: { type: "json_object" } } : {}),
       }),
     });
