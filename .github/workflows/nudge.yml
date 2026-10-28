@@ -9,6 +9,9 @@ on:
     # Every 30 minutes. GitHub can delay runs during peak load, which is fine:
     # the endpoint checks the user's own window rather than trusting the clock.
     - cron: "*/30 * * * *"
+    # Weekly keepalive. GitHub disables scheduled workflows after 60 days with
+    # no commits — it happened on 2026-10-17 and reminders silently stopped.
+    - cron: "0 12 * * 1"
   workflow_dispatch:
     inputs:
       dry:
@@ -17,7 +20,19 @@ on:
         default: false
 
 jobs:
+  keepalive:
+    if: github.event.schedule == '0 12 * * 1'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Re-enable this workflow to reset the inactivity timer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/nudge.yml/enable"
+
   nudge:
+    if: github.event.schedule != '0 12 * * 1'
     runs-on: ubuntu-latest
     steps:
       - name: Call the nudge endpoint
